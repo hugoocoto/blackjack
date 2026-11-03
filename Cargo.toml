@@ -1,0 +1,19 @@
+[package]
+name = "blackjack"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fontdue = "0.9.5"
+macroquad = { version = "0.4.16", features = ["audio"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Keep debug builds playable: optimize dependencies.
+[profile.dev.package."*"]
+opt-level = 3
