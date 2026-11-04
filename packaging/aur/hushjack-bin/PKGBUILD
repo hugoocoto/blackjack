@@ -1,0 +1,28 @@
+# Maintainer: Hugo Coto <hugocoto100305@gmail.com>
+
+pkgname=hushjack-bin
+_pkgname=hushjack
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="A calm pixel-art blackjack table with a hand-shuffled 6-deck shoe (prebuilt)"
+arch=('x86_64')
+url="https://github.com/hugoocoto/blackjack"
+license=('GPL-3.0-or-later')
+# X11, XInput and OpenGL are loaded at runtime; ALSA is linked.
+depends=('alsa-lib' 'glibc' 'hicolor-icon-theme' 'libgcc' 'libgl' 'libx11' 'libxi')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+# The binary is already stripped (see Cargo.toml), so there's nothing to debug.
+options=('!debug')
+source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$_pkgname-linux-x86_64.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$_pkgname-linux-x86_64"
+  install -Dm755 "$_pkgname" "$pkgdir/usr/bin/$_pkgname"
+  install -Dm644 "$_pkgname.desktop" "$pkgdir/usr/share/applications/$_pkgname.desktop"
+  install -Dm644 "$_pkgname.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_pkgname.svg"
+  install -Dm644 "$_pkgname.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/$_pkgname.png"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname/assets" licenses/*
+}

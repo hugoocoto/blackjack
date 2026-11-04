@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hushjack
+GenericName=Blackjack
+Comment=A calm pixel-art blackjack table
+Exec=hushjack
+Icon=hushjack
+Terminal=false
+Categories=Game;CardGame;
+Keywords=blackjack;cards;casino;21;
+StartupWMClass=hushjack

@@ -1,4 +1,6 @@
-# Blackjack
+# Hushjack
+
+<img src="assets/icon/hushjack.png" alt="" width="96" align="right">
 
 A small pixel-art blackjack table for one player, written in Rust. It opens
 straight into the game. A dealer hand-shuffles 6 decks the way a casino does,
@@ -10,16 +12,18 @@ you cut, and you play from the shoe for as long as you like.
 
 Get the build for your system from the
 [releases page](https://github.com/hugoocoto/blackjack/releases), unpack it and
-run `blackjack`. The game is a single file.
+run `hushjack`. The game is a single file.
 
 - **Windows:** the game isn't signed, so SmartScreen may warn you. Click
   *More info*, then *Run anyway*.
 - **macOS:** the game isn't signed either, so macOS blocks it the first time.
-  Run `xattr -d com.apple.quarantine blackjack` in the unpacked folder, or
+  Run `xattr -d com.apple.quarantine hushjack` in the unpacked folder, or
   allow it in *System Settings → Privacy & Security*. The build works on
   Apple Silicon and Intel Macs.
 - **Linux:** x86_64 only. It needs ALSA (`libasound2`), which most desktops
-  already have.
+  already have. Run `./install.sh` in the unpacked folder to add it to your
+  menu (it installs into `~/.local`, no root needed; `./install.sh --uninstall`
+  removes it). On Arch, install `hushjack-bin` or `hushjack-git` from the AUR.
 
 ## Play
 
@@ -28,6 +32,9 @@ To build it yourself instead:
 ```sh
 cargo run --release
 ```
+
+To install your own build into `~/.local` with a menu entry, run
+`cargo build --release` and then `packaging/linux/install.sh`.
 
 | Key | Action |
 | --- | --- |

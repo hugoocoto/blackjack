@@ -1,0 +1,53 @@
+# Maintainer: Hugo Coto <hugocoto100305@gmail.com>
+
+pkgname=hushjack-git
+_pkgname=hushjack
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="A calm pixel-art blackjack table with a hand-shuffled 6-deck shoe (latest commit)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/hugoocoto/blackjack"
+license=('GPL-3.0-or-later')
+# X11, XInput and OpenGL are loaded at runtime; ALSA is linked.
+depends=('alsa-lib' 'glibc' 'hicolor-icon-theme' 'libgcc' 'libgl' 'libx11' 'libxi')
+makedepends=('cargo' 'git')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+# The binary is already stripped (see Cargo.toml), so there's nothing to debug.
+options=('!debug')
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  git describe --long --tags --abbrev=7 | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen --release
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 "target/release/$_pkgname" "$pkgdir/usr/bin/$_pkgname"
+  install -Dm644 "packaging/linux/$_pkgname.desktop" "$pkgdir/usr/share/applications/$_pkgname.desktop"
+  install -Dm644 "assets/icon/$_pkgname.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_pkgname.svg"
+  install -Dm644 "assets/icon/$_pkgname.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/$_pkgname.png"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname/assets" assets/licenses/*
+}

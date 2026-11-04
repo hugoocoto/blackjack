@@ -13,12 +13,20 @@ use macroquad::rand;
 
 fn conf() -> Conf {
     Conf {
-        window_title: "Blackjack".into(),
+        window_title: "Hushjack".into(),
         window_width: 1440,
         window_height: 810,
         window_resizable: true,
         high_dpi: false,
         sample_count: 1,
+        // Taskbar / Dock icon on Windows and macOS (miniquad's logo otherwise).
+        icon: Some(miniquad::conf::Icon {
+            small: *include_bytes!("../assets/icon/window-16.rgba"),
+            medium: *include_bytes!("../assets/icon/window-32.rgba"),
+            big: *include_bytes!("../assets/icon/window-64.rgba"),
+        }),
+        // Matches StartupWMClass in the .desktop file, so Linux desktops show its icon.
+        platform: miniquad::conf::Platform { linux_wm_class: "hushjack", ..Default::default() },
         ..Default::default()
     }
 }

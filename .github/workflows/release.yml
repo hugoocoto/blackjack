@@ -56,29 +56,33 @@ jobs:
           cargo build --release --locked --target aarch64-apple-darwin
           cargo build --release --locked --target x86_64-apple-darwin
           mkdir -p target/release
-          lipo -create -output target/release/blackjack \
-            target/aarch64-apple-darwin/release/blackjack \
-            target/x86_64-apple-darwin/release/blackjack
+          lipo -create -output target/release/hushjack \
+            target/aarch64-apple-darwin/release/hushjack \
+            target/x86_64-apple-darwin/release/hushjack
 
       - name: Package
         shell: bash
         run: |
-          dir="blackjack-${{ matrix.name }}"
+          dir="hushjack-${{ matrix.name }}"
           mkdir "$dir"
           cp README.md LICENSE "$dir/"
           cp -r assets/licenses "$dir/"
           if [ "${{ runner.os }}" = Windows ]; then
-            cp target/release/blackjack.exe "$dir/"
+            cp target/release/hushjack.exe "$dir/"
             7z a "$dir.zip" "$dir"
           else
-            cp target/release/blackjack "$dir/"
+            cp target/release/hushjack "$dir/"
+            if [ "${{ runner.os }}" = Linux ]; then
+              cp packaging/linux/install.sh packaging/linux/hushjack.desktop \
+                assets/icon/hushjack.svg assets/icon/hushjack.png "$dir/"
+            fi
             tar czf "$dir.tar.gz" "$dir"
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: blackjack-${{ matrix.name }}
-          path: blackjack-${{ matrix.name }}.*
+          name: hushjack-${{ matrix.name }}
+          path: hushjack-${{ matrix.name }}.*
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
@@ -91,4 +95,4 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" blackjack-* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" hushjack-* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
