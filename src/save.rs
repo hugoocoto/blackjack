@@ -4,42 +4,47 @@
 //! whole sessions).
 
 use crate::theme::{Look, Themes};
-use std::path::PathBuf;
-use std::{env, fs};
+
+#[cfg(not(target_arch = "wasm32"))]
+use files::{read, write};
+#[cfg(target_arch = "wasm32")]
+use web::{read, write};
 
 /// How many entries each side of the records board keeps.
 pub const BOARD: usize = 5;
 
-/// The per-user folder for the game's files, or None where there is none
-/// (the web build, see `web`; Android, where the app's own folder isn't
-/// wired up yet).
-fn dir() -> Option<PathBuf> {
-    if cfg!(any(target_arch = "wasm32", target_os = "android")) {
-        return None;
+/// Files in the per-user data folder.
+#[cfg(not(target_arch = "wasm32"))]
+mod files {
+    use std::path::PathBuf;
+    use std::{env, fs};
+
+    /// The per-user folder for the game's files, or None where there is
+    /// none (Android, where the app's own folder isn't wired up yet).
+    fn dir() -> Option<PathBuf> {
+        if cfg!(target_os = "android") {
+            return None;
+        }
+        let var = |k: &str| env::var_os(k).map(PathBuf::from);
+        let base = if cfg!(windows) {
+            var("APPDATA")?
+        } else if cfg!(target_os = "macos") {
+            var("HOME")?.join("Library/Application Support")
+        } else {
+            var("XDG_DATA_HOME").filter(|p| p.is_absolute()).or_else(|| Some(var("HOME")?.join(".local/share")))?
+        };
+        Some(base.join("hushjack"))
     }
-    let var = |k: &str| env::var_os(k).map(PathBuf::from);
-    let base = if cfg!(windows) {
-        var("APPDATA")?
-    } else if cfg!(target_os = "macos") {
-        var("HOME")?.join("Library/Application Support")
-    } else {
-        var("XDG_DATA_HOME").filter(|p| p.is_absolute()).or_else(|| Some(var("HOME")?.join(".local/share")))?
-    };
-    Some(base.join("hushjack"))
-}
 
-fn read(name: &str) -> String {
-    #[cfg(target_arch = "wasm32")]
-    return web::read(name);
-    dir().and_then(|d| fs::read_to_string(d.join(name)).ok()).unwrap_or_default()
-}
+    pub fn read(name: &str) -> String {
+        dir().and_then(|d| fs::read_to_string(d.join(name)).ok()).unwrap_or_default()
+    }
 
-fn write(name: &str, text: &str) {
-    #[cfg(target_arch = "wasm32")]
-    return web::write(name, text);
-    let Some(d) = dir() else { return };
-    if let Err(e) = fs::create_dir_all(&d).and_then(|_| fs::write(d.join(name), text)) {
-        eprintln!("hushjack: couldn't save {name}: {e}");
+    pub fn write(name: &str, text: &str) {
+        let Some(d) = dir() else { return };
+        if let Err(e) = fs::create_dir_all(&d).and_then(|_| fs::write(d.join(name), text)) {
+            eprintln!("hushjack: couldn't save {name}: {e}");
+        }
     }
 }
 

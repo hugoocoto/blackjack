@@ -105,6 +105,14 @@ jobs:
       - name: Update cargo quad-apk
         run: cargo install --force --locked --git https://github.com/not-fl3/cargo-quad-apk --rev d411c8fe1c08339e46d7dc6b40ac04ea5e3a01b6 cargo-quad-apk
 
+      # cargo quad-apk pastes miniquad's Android glue into src/main.rs, so it
+      # has to follow the game's edition (2024): #[no_mangle] needs unsafe(...).
+      - name: Make miniquad's Android glue edition 2024
+        run: |
+          cargo fetch --locked
+          sed -i 's/^#\[no_mangle\]/#[unsafe(no_mangle)]/' "$CARGO_HOME"/registry/src/*/miniquad-*/src/native/android/mod_inject.rs
+          grep -n "no_mangle" "$CARGO_HOME"/registry/src/*/miniquad-*/src/native/android/mod_inject.rs
+
       - name: Build
         run: |
           cargo quad-apk build --release
