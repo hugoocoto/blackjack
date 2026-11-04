@@ -374,14 +374,18 @@ impl Assets {
             };
             self.cut_cards(sp[M], n);
         }
-        // Piles the current step leaves alone; `skip` lists the ones it animates.
-        let rest = |skip: &[usize], loose_m: bool| {
-            for (i, spot) in sp.iter().enumerate() {
-                if !skip.contains(&i) && !(v.rolled && i == M) {
-                    self.pile_at(spot.c, spot.rot, c[i], loose_m && i == M);
+        // Piles sitting on their spots, drawn back to front so a nearer pile
+        // covers a farther one. Cards in the air are drawn after them.
+        let mut order: [usize; SPOTS] = std::array::from_fn(|i| i);
+        order.sort_by(|&i, &j| sp[i].c.y.total_cmp(&sp[j].c.y));
+        let settled = |n: [usize; SPOTS], loose: [bool; SPOTS]| {
+            for i in order {
+                if !(v.rolled && i == M) {
+                    self.pile_at(sp[i].c, sp[i].rot, n[i], loose[i]);
                 }
             }
         };
+        let loose_m = |on: bool| -> [bool; SPOTS] { std::array::from_fn(|i| on && i == M) };
         match v.step {
             Some((ShStep::Gather, p)) => {
                 for (from, n) in &g.gather_from {
@@ -393,9 +397,7 @@ impl Assets {
                 for (from, _, n) in ms {
                     left[from] -= n;
                 }
-                for (i, spot) in sp.iter().enumerate() {
-                    self.pile_at(spot.c, spot.rot, left[i], v.loose && i == M);
-                }
+                settled(left, loose_m(v.loose));
                 for (from, to, n) in ms {
                     let (a, b) = (sp[from], sp[to]);
                     let e = ease(p);
@@ -404,29 +406,32 @@ impl Assets {
             }
             Some((ShStep::Riffle { a, b, to } | ShStep::LooseRiffle { a, b, to }, p)) => {
                 let loose = matches!(v.step, Some((ShStep::LooseRiffle { .. }, _)));
-                rest(&[a, b, to], v.loose);
                 let left_a = (c[a] as f32 * (1. - p)) as usize;
                 let left_b = (c[b] as f32 * (1. - p)) as usize;
                 let merged = c[to] + (c[a] - left_a) + (c[b] - left_b);
-                self.pile_at(sp[a].c, sp[a].rot, left_a, false);
-                self.pile_at(sp[b].c, sp[b].rot, left_b, false);
-                self.pile_at(sp[to].c, sp[to].rot, merged, loose || v.loose);
+                let (mut n, mut l) = (c, loose_m(v.loose));
+                (n[a], n[b], n[to]) = (left_a, left_b, merged);
+                (l[a], l[b], l[to]) = (false, false, loose || v.loose);
+                settled(n, l);
                 self.riffle_flyers([(sp[a].c, left_a), (sp[b].c, left_b)], (sp[to].c, merged), p);
             }
             Some((ShStep::Strip { from, to }, p)) => {
-                rest(&[from, to], v.loose);
                 let piece = c[from].div_ceil(4);
                 let k = ((p * 4.) as usize).min(3);
                 let f = (p * 4.).fract();
                 let landed = (k * piece).min(c[from]);
                 let flying = piece.min(c[from] - landed);
-                self.pile_at(sp[from].c, 0., c[from] - landed - flying, false);
-                self.pile_at(sp[to].c, 0., c[to] + landed, false);
+                let (mut n, mut l) = (c, loose_m(v.loose));
+                (n[from], n[to]) = (c[from] - landed - flying, c[to] + landed);
+                (l[from], l[to]) = (false, false);
+                settled(n, l);
                 let lift = vec2(0., -(f * PI).sin() * 6.);
                 self.pile_at(sp[from].c.lerp(sp[to].c, ease(f)) + lift, 0., flying, false);
             }
             Some((ShStep::Roll, p)) => {
-                rest(&[M], false);
+                let mut n = c;
+                n[M] = 0;
+                settled(n, [false; SPOTS]);
                 let e = ease(p);
                 let from = Rect::new(sp[M].c.x - CW / 2., sp[M].c.y - CH / 2., CW, CH);
                 let to = Rect::new(BAR.x, BAR.y, BAR_LOOSE_W, BAR.h);
@@ -437,7 +442,7 @@ impl Assets {
                 let loose = (len - BAR.w) / (BAR_LOOSE_W - BAR.w);
                 self.stack_bar(Rect::new(BAR.x, BAR.y, len, BAR.h), None, false, loose, false);
             }
-            Some((ShStep::CutCards, _)) => rest(&[], v.loose),
+            Some((ShStep::CutCards, _)) => settled(c, loose_m(v.loose)),
         }
         self.text("SHUFFLING 6 DECKS", W / 2., 200., BIG, WHITE_T, 0.5);
     }

@@ -717,11 +717,13 @@ impl Game {
         if actions.contains(&Action::Chart) {
             self.show_chart = !self.show_chart;
         }
-        // Space / Enter deal between rounds and stand during the player's turn.
-        if self.phase == Phase::Round && self.player_turn {
+        // Space / Enter deal between rounds, decline insurance, and stand during
+        // the player's turn.
+        if self.phase == Phase::Round && (self.player_turn || self.insurance_offer) {
+            let to = if self.insurance_offer { Action::NoInsure } else { Action::Stand };
             for a in &mut actions {
                 if *a == Action::Deal {
-                    *a = Action::Stand;
+                    *a = to;
                 }
             }
         }
@@ -1283,6 +1285,18 @@ mod tests {
         settle_time(&mut g);
         assert_eq!(g.phase, Phase::Bet);
         assert_eq!(g.hands[0].cards.len(), 2);
+    }
+
+    #[test]
+    fn space_declines_insurance() {
+        let mut g = stacked(&[10, 1, 10, 12]);
+        let before = start(&mut g);
+        assert!(g.insurance_offer);
+        g.update(0.05, &act(Action::Deal));
+        settle_time(&mut g);
+        assert_eq!(g.insurance, 0);
+        assert_eq!(g.phase, Phase::Bet);
+        assert_eq!(g.credits - before, -20);
     }
 
     #[test]

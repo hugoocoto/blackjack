@@ -14,7 +14,7 @@ cargo run --release
 
 | Key | Action |
 | --- | --- |
-| `Space` | Deal, stand, skip the shuffle |
+| `Space` | Deal, stand, decline insurance, skip the shuffle |
 | `H` `S` `D` `P` | Hit, stand, double, split |
 | `I` / `N` | Take or decline insurance |
 | `←` `→` or mouse wheel | Change your bet |
