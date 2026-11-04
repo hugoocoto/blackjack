@@ -94,14 +94,16 @@ sprite(13, 15, [
 ])
 
 # Crescent moon, top right, and a few stars.
-mx, my = 24.5, 5.
-for y in range(N):
-    for x in range(N):
-        inside = (x - mx) ** 2 + (y - my) ** 2 <= 3.7 ** 2
-        bite = (x - mx - 1.7) ** 2 + (y - my + 1.0) ** 2 <= 3.0 ** 2
-        if inside and not bite:
-            shade = (y - my) - (x - mx) > 3.3
-            put(x, y, "y" if shade else "Y")
+sprite(23, 3, [
+    "..YYYY.",
+    ".YYYy..",
+    "YYYy...",
+    "YYYy...",
+    "YYYy...",
+    "YYYy...",
+    ".YYYy..",
+    "..YYYY.",
+])
 for (x, y) in ((6, 5), (15, 4), (27, 14)):
     put(x, y, "*")
 
