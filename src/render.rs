@@ -15,6 +15,8 @@ pub struct Assets {
     pub cover: Option<Material>,
     /// The words printed on the felt.
     pub felt_print: Color,
+    /// The ace of spades, for the title card.
+    pub logo: Texture2D,
 }
 
 struct Glyph {
@@ -834,6 +836,32 @@ impl Assets {
         table(362. + right, 61. + rh * 9. + 4., "PAIR", Table::Pairs, &PAIRS);
     }
 
+    /// The title card the game opens on, over the table: the logo and the
+    /// name fading in, a wait while the sounds load, then the card lifting
+    /// off upwards as `lift` goes 0..1. `t`: seconds since the game opened.
+    pub fn intro(&self, t: f32, loading: bool, lift: f32) {
+        if lift >= 1. {
+            return;
+        }
+        let y = -((H + 8.) * ease(lift)).round();
+        let fade = |c: Color, a: f32| Color::new(c.r, c.g, c.b, c.a * a);
+        // Its edge and shadow show on the table as it lifts.
+        draw_rectangle(0., y + H, W, 6., Color::new(0., 0., 0., 0.35));
+        draw_rectangle(0., y, W, H, Color::from_rgba(13, 11, 18, 255));
+        draw_rectangle(0., y + H - 2., W, 2., fade(GOLD, 0.6));
+        let a = ((t - 0.2) / 0.8).clamp(0., 1.);
+        let p = DrawTextureParams { dest_size: Some(vec2(64., 64.)), ..Default::default() };
+        draw_texture_ex(&self.logo, W / 2. - 32., y + 58., fade(WHITE, a), p);
+        let b = ((t - 0.5) / 0.8).clamp(0., 1.);
+        self.text("HUSHJACK", W / 2., y + 160., 48, fade(GOLD, b), 0.5);
+        let c = ((t - 0.9) / 0.8).clamp(0., 1.);
+        self.text("A QUIET TABLE FOR ONE", W / 2., y + 182., SMALL, fade(MUTED, c), 0.5);
+        if loading {
+            let dots = ".".repeat(1 + (t * 3.) as usize % 3);
+            self.text(&dots, W / 2., y + 214., SMALL, fade(MUTED, c * 0.6), 0.5);
+        }
+    }
+
     /// Card stock with a darker edge and clipped corners.
     fn paper(&self, r: Rect) {
         self.with(&self.shade, || draw_rectangle(r.x + 2., r.y + 3., r.w, r.h, SHADOW));
@@ -852,12 +880,11 @@ impl Assets {
         let r = THEMES_PANEL;
         self.paper(r);
         self.text("THEMES", r.x + 10., r.y + 15., SMALL, INK, 0.);
-        let chosen = [g.look.front, g.look.back, g.look.felt];
         for (kind, label) in crate::theme::KINDS.iter().enumerate() {
-            let y = r.y + 24. + kind as f32 * 26.;
+            let y = theme_row_y(kind);
             let c = if kind == g.theme_row { INK_MARK } else { INK_SOFT };
             self.text(label, r.x + 10., y + 13., SMALL, c, 0.);
-            self.text(g.themes.name(kind, chosen[kind]), r.x + 106., y + 13., SMALL, INK, 0.5);
+            self.text(g.themes.name(kind, g.look.get(kind)), r.x + 106., y + 13., SMALL, INK, 0.5);
         }
         for b in &buttons {
             self.button(g, b, b.rect.contains(mouse), 1.);

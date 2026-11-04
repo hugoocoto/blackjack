@@ -28,7 +28,8 @@ menu entry.
 | `I` / `N` | Take or decline insurance |
 | `←` `→` / wheel | Change your bet |
 | `C` | Strategy chart |
-| `T` | Themes: card front, back and felt |
+| `T` | Themes: cards, felt, sounds and music |
+| `M` | Music on or off |
 | `B` | Next card back |
 | `F` | Fullscreen |
 | `Esc` | Records board; again to quit (new table in the browser) |
@@ -64,4 +65,5 @@ cargo run --release
 ## Credits
 
 Cards, sounds and font by [Kenney](https://kenney.nl) (CC0, see
-`assets/licenses/`). Code under the GPL v3 or later, see [LICENSE](LICENSE).
+`assets/licenses/`). The music is composed in code
+(`assets/music/compose.py`). Code under the GPL v3 or later, see [LICENSE](LICENSE).

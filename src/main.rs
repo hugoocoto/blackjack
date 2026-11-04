@@ -11,9 +11,11 @@ mod strategy;
 mod theme;
 
 use game::{Action, Game, Input, Sfx, H, W};
-use macroquad::audio::{load_sound_from_bytes, play_sound, PlaySoundParams, Sound};
+use macroquad::audio::{load_sound_from_bytes, play_sound, set_sound_volume, stop_sound, PlaySoundParams, Sound};
 use macroquad::prelude::*;
 use macroquad::rand;
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 fn conf() -> Conf {
     // macroquad calls this before it opens the window, so flags like
@@ -47,66 +49,88 @@ fn conf() -> Conf {
     }
 }
 
-/// Sound banks, indexed by `Sfx as usize`. Decoding takes ~100 ms, so files
-/// are decoded one per frame after the window is already showing the game.
+/// Sound banks, indexed by `Sfx as usize`: the takes of each sound (see
+/// assets/sfx/build.sh). Decoding takes a while, so files are decoded one per
+/// frame after the window is already showing the game, the shuffle's first.
 struct Sounds {
-    banks: [Vec<Sound>; 6],
-    pending: Vec<(Sfx, &'static [u8])>,
-    /// Picks which take of a sound plays. Its own generator, not the game's,
-    /// so playing with sound deals the same cards as playing muted.
+    /// By sound and style (0 except for the click and the toggle, see
+    /// `theme::CLICKS`, `theme::TOGGLES`).
+    banks: HashMap<(Sfx, usize), Vec<Sound>>,
+    /// The take each bank played last, so it isn't played twice in a row.
+    last: RefCell<HashMap<(Sfx, usize), usize>>,
+    pending: Vec<((Sfx, usize), &'static [u8])>,
+    /// The chosen click and toggle styles.
+    click: usize,
+    toggle: usize,
+    /// Picks which take plays. Its own generator, not the game's, so playing
+    /// with sound deals the same cards as playing muted.
     pick: std::cell::Cell<u64>,
 }
 
-macro_rules! ogg {
-    ($sfx:expr, $f:literal) => {
-        ($sfx, include_bytes!(concat!("../assets/sfx/", $f, ".ogg")) as &[u8])
+/// The takes of a bank: assets/sfx/<name>-<n>.ogg for each n.
+macro_rules! bank {
+    (($sfx:expr, $style:literal), $name:literal, $($n:literal)+) => {
+        [$((($sfx, $style), include_bytes!(concat!("../assets/sfx/", $name, "-", $n, ".ogg")) as &[u8])),+]
+    };
+    ($sfx:expr, $name:literal, $($n:literal)+) => {
+        bank!(($sfx, 0), $name, $($n)+)
     };
 }
 
 impl Sounds {
     fn new() -> Self {
-        let mut pending = vec![
-            ogg!(Sfx::Shuffle, "card-shuffle"),
-            ogg!(Sfx::Load, "card-fan-1"),
-            ogg!(Sfx::Flip, "card-place-1"),
-            ogg!(Sfx::Deal, "card-slide-1"),
-            ogg!(Sfx::Chip, "chip-lay-1"),
-            ogg!(Sfx::Win, "chips-stack-1"),
-            ogg!(Sfx::Deal, "card-slide-2"),
-            ogg!(Sfx::Deal, "card-slide-3"),
-            ogg!(Sfx::Deal, "card-slide-4"),
-            ogg!(Sfx::Flip, "card-place-2"),
-            ogg!(Sfx::Flip, "card-place-3"),
-            ogg!(Sfx::Chip, "chip-lay-2"),
-            ogg!(Sfx::Win, "chips-stack-2"),
-            ogg!(Sfx::Win, "chips-handle-1"),
-        ];
+        let mut pending: Vec<((Sfx, usize), &[u8])> = [
+            &bank!(Sfx::Riffle, "riffle", 1 2 3 4 5 6 7)[..],
+            &bank!(Sfx::Shove, "shove", 1 2 3 4 5 6 7 8),
+            &bank!(Sfx::Slide, "slide", 1 2 3 4 5 6 7 8),
+            &bank!(Sfx::Place, "place", 1 2 3 4 5 6 7 8 9 10 11 12),
+            &bank!(Sfx::Fan, "fan", 1 2 3 4),
+            &bank!(Sfx::Chip, "chip", 1 2 3 4 5 6 7),
+            &bank!(Sfx::Payout, "payout", 1 2 3 4 5 6),
+            &bank!(Sfx::Sweep, "sweep", 1 2 3 4 5 6),
+            &bank!((Sfx::Click, 0), "click-die", 1 2 3 4),
+            &bank!((Sfx::Click, 1), "click-chip", 1 2 3 4 5 6),
+            &bank!((Sfx::Click, 2), "click-clack", 1 2 3 4),
+            &bank!((Sfx::Toggle, 0), "toggle-fan", 1 2 3 4 5 6),
+            &bank!((Sfx::Toggle, 1), "toggle-shove", 1 2 3 4),
+            &bank!((Sfx::Toggle, 2), "toggle-swish", 1 2 3 4),
+            &bank!(Sfx::Chime, "chime", 1 2 3 4),
+        ]
+        .concat();
         if std::env::var("BJ_MUTE").is_ok() {
             pending.clear();
         }
         pending.reverse();
         // Any non-zero start will do for xorshift.
         let pick = std::cell::Cell::new((miniquad::date::now() * 1e3) as u64 | 1);
-        Sounds { banks: Default::default(), pending, pick }
+        Sounds { banks: HashMap::new(), last: RefCell::default(), pending, click: 0, toggle: 0, pick }
     }
 
     async fn load_one(&mut self) {
-        if let Some((sfx, bytes)) = self.pending.pop()
+        if let Some((bank, bytes)) = self.pending.pop()
             && let Ok(s) = load_sound_from_bytes(bytes).await
         {
-            self.banks[sfx as usize].push(s);
+            self.banks.entry(bank).or_default().push(s);
         }
     }
 
-    fn play(&self, sfx: Sfx) {
-        let bank = &self.banks[sfx as usize];
-        if bank.is_empty() {
-            return;
-        }
-        let volume = match sfx {
-            Sfx::Shuffle => 0.8,
+    /// Plays a take of `sfx` at `volume` times its place in the mix.
+    fn play(&self, sfx: Sfx, volume: f32) {
+        let style = match sfx {
+            Sfx::Click => self.click,
+            Sfx::Toggle => self.toggle,
+            _ => 0,
+        };
+        let Some(bank) = self.banks.get(&(sfx, style)) else { return };
+        // The mix: every take is already at its bank's loudness.
+        let mix = match sfx {
+            Sfx::Riffle => 0.8,
+            Sfx::Shove | Sfx::Slide | Sfx::Place | Sfx::Fan => 0.6,
             Sfx::Chip => 0.6,
-            _ => 0.7,
+            Sfx::Payout => 0.7,
+            Sfx::Sweep => 0.5,
+            Sfx::Click | Sfx::Toggle => 0.35,
+            Sfx::Chime => 0.35,
         };
         // xorshift
         let mut x = self.pick.get();
@@ -114,8 +138,105 @@ impl Sounds {
         x ^= x >> 7;
         x ^= x << 17;
         self.pick.set(x);
-        let i = (x % bank.len() as u64) as usize;
-        play_sound(&bank[i], PlaySoundParams { looped: false, volume });
+        let mut last = self.last.borrow_mut();
+        let mut i = (x % bank.len() as u64) as usize;
+        if last.get(&(sfx, style)) == Some(&i) && bank.len() > 1 {
+            i = (i + 1) % bank.len();
+        }
+        last.insert((sfx, style), i);
+        play_sound(&bank[i], PlaySoundParams { looped: false, volume: mix * volume });
+    }
+
+    /// Stops every take of these sounds that's still playing.
+    fn stop(&self, sfx: &[Sfx]) {
+        for take in self.banks.iter().filter(|b| sfx.contains(&b.0.0)).flat_map(|b| b.1) {
+            stop_sound(take);
+        }
+    }
+}
+
+/// The music (see assets/music/compose.py): stems that loop together, all
+/// started on the same frame so they stay in step, each faded with the run.
+struct Music {
+    /// Loaded so far, in `STEMS` order.
+    stems: Vec<Sound>,
+    pending: Vec<&'static [u8]>,
+    /// Each stem's volume now, easing towards `targets`.
+    volume: [f32; 5],
+    playing: bool,
+}
+
+/// table, groove, lead, swing, cold
+const STEMS: [&[u8]; 5] = [
+    include_bytes!("../assets/music/table.ogg"),
+    include_bytes!("../assets/music/groove.ogg"),
+    include_bytes!("../assets/music/lead.ogg"),
+    include_bytes!("../assets/music/swing.ogg"),
+    include_bytes!("../assets/music/cold.ogg"),
+];
+
+/// The intro, in seconds after loading: the title card lifts from
+/// `INTRO_LIFT`, and the dealer starts at `INTRO_END`.
+const INTRO_LIFT: f32 = 1.5;
+const INTRO_END: f32 = 2.8;
+
+/// The music's place in the mix, under the table's sounds.
+const MUSIC_VOLUME: f32 = 0.5;
+
+impl Music {
+    fn new() -> Self {
+        let mut pending = STEMS.to_vec();
+        if std::env::var("BJ_MUTE").is_ok() {
+            pending.clear();
+        }
+        pending.reverse();
+        Music { stems: Vec::new(), pending, volume: [0.; 5], playing: false }
+    }
+
+    async fn load_one(&mut self) {
+        if let Some(bytes) = self.pending.pop()
+            && let Ok(s) = load_sound_from_bytes(bytes).await
+        {
+            self.stems.push(s);
+        }
+    }
+
+    /// How loud each stem should be: the table always, a fuller groove and
+    /// then the theme as a winning run grows, the ride on a long one; on a
+    /// losing run the table gives way to the cold layer.
+    fn targets(g: &Game) -> [f32; 5] {
+        let smooth = |a: f32, b: f32, x: f32| game::smooth((x - a) / (b - a));
+        let (warm, cold) = (g.run.max(0.), (-g.run).max(0.));
+        let table = 1. - smooth(0.15, 0.6, cold);
+        let on = if g.look.music == 0 { MUSIC_VOLUME } else { 0. };
+        [
+            table,
+            table * (0.55 + 0.45 * smooth(0.05, 0.3, warm)),
+            table * smooth(0.2, 0.5, warm),
+            smooth(0.55, 0.85, warm),
+            smooth(0.15, 0.6, cold),
+        ]
+        .map(|v| v * on)
+    }
+
+    fn update(&mut self, g: &Game, dt: f32) {
+        if self.stems.len() < STEMS.len() {
+            return;
+        }
+        if !self.playing {
+            self.playing = true;
+            for s in &self.stems {
+                play_sound(s, PlaySoundParams { looped: true, volume: 0. });
+            }
+        }
+        // Fades of a second or two.
+        for ((v, target), s) in self.volume.iter_mut().zip(Self::targets(g)).zip(&self.stems) {
+            let next = *v + (target - *v).clamp(-dt * 0.6, dt * 0.6);
+            if (next - *v).abs() > 1e-4 {
+                *v = next;
+                set_sound_volume(s, next);
+            }
+        }
     }
 }
 
@@ -150,11 +271,17 @@ async fn main() {
         lamp: shaders::lamp(),
         shade: shaders::shade(),
         cover: shaders::cover(),
+        logo: {
+            let t = Texture2D::from_rgba8(64, 64, include_bytes!("../assets/icon/window-64.rgba"));
+            t.set_filter(FilterMode::Nearest);
+            t
+        },
     };
     // BJ_NO_CRT=1 draws without the screen shader (to compare).
     let screen = if std::env::var("BJ_NO_CRT").is_ok() { None } else { shaders::screen() };
 
     let mut sounds = Sounds::new();
+    let mut music = Music::new();
 
     // Linear, so the screen shader can smooth the edges of the pixels it bends.
     // With depth, used to keep shadows from stacking (see shaders.rs).
@@ -170,6 +297,7 @@ async fn main() {
     // recording doesn't depend on the monitor or on how slow saving is.
     // BJ_SHOT_SCREEN=1 saves the window instead, with the screen shader.
     // BJ_LEAVE_AT=n presses Esc at frame n (to see the records board).
+    // BJ_INTRO=1 keeps the title card in a recording (it's skipped otherwise).
     let auto = std::env::var("BJ_AUTO").is_ok();
     let watch = std::env::var("BJ_WATCH").is_ok();
     let speed: f32 = std::env::var("BJ_SPEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1.);
@@ -196,6 +324,12 @@ async fn main() {
     let mut stack: Option<Vec<u8>> =
         std::env::var("BJ_STACK").ok().map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect());
     let mut fullscreen = false;
+    // Seconds into the intro, counted once loading is done; recordings and
+    // the auto-player skip it, so their frames stay where they were.
+    let keep_intro = std::env::var("BJ_INTRO").is_ok();
+    let mut intro = if (auto || !shots.is_empty()) && !keep_intro { INTRO_END } else { 0. };
+    // Seconds since the game opened (the title fades in on it).
+    let mut boot: f32 = 0.;
     let mut last_mouse = Vec2::ZERO;
     let mut frame: u64 = 0;
 
@@ -235,6 +369,7 @@ async fn main() {
             (KeyCode::C, Action::Chart),
             (KeyCode::B, Action::Theme(1, 1)),
             (KeyCode::T, Action::Themes),
+            (KeyCode::M, Action::Theme(5, 1)),
             (KeyCode::Space, Action::Deal),
             (KeyCode::Enter, Action::Deal),
             (KeyCode::KpEnter, Action::Deal),
@@ -297,7 +432,22 @@ async fn main() {
             }
         }
         let dt = if shots.is_empty() { get_frame_time().min(1. / 20.) } else { 1. / 60. } * speed;
-        game.update(dt, &input);
+        // The game opens on its title card, which waits until every sound and
+        // the music are decoded (the long stems take a moment, so play never
+        // stutters), then the music starts alone, and a moment later the card
+        // lifts off the table and the dealer starts. Space or a click hurries
+        // it along.
+        let loading = !sounds.pending.is_empty() || !music.pending.is_empty();
+        if !loading && intro < INTRO_END {
+            intro += dt;
+            if input.confirm {
+                intro = intro.max(INTRO_LIFT);
+            }
+        } else if !loading {
+            game.update(dt, &input);
+        }
+        music.update(&game, dt);
+        boot += dt;
         if game.scores_changed {
             game.scores_changed = false;
             game.scores.save();
@@ -325,8 +475,14 @@ async fn main() {
             save::save_look(&themes, look);
         }
 
-        for s in game.sfx.drain(..) {
-            sounds.play(s);
+        if game.hush_shuffle {
+            game.hush_shuffle = false;
+            sounds.stop(&game::SHUFFLE_SFX);
+        }
+        sounds.click = game.look.click;
+        sounds.toggle = game.look.toggle;
+        for (s, volume) in game.sfx.drain(..) {
+            sounds.play(s, volume);
         }
 
         // A short, soft shake (blackjack, bust), on whole pixels.
@@ -337,6 +493,7 @@ async fn main() {
         set_camera(&cam);
         clear_background(BLACK);
         assets.draw(&game, mouse);
+        assets.intro(boot, loading, (intro - INTRO_LIFT) / (INTRO_END - INTRO_LIFT - 0.3));
 
         set_default_camera();
         let border = Color::from_rgba(10, 8, 14, 255);
@@ -368,6 +525,34 @@ async fn main() {
             }
         }
         next_frame().await;
-        sounds.load_one().await;
+        // While loading, as much as fits in a few frames' time.
+        let start = miniquad::date::now();
+        while miniquad::date::now() - start < 0.05 && !sounds.pending.is_empty() {
+            sounds.load_one().await;
+        }
+        if sounds.pending.is_empty() {
+            music.load_one().await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_sound_file_is_in_a_bank() {
+        let files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/sfx"))
+            .unwrap()
+            .filter(|f| f.as_ref().unwrap().path().extension().is_some_and(|e| e == "ogg"))
+            .count();
+        assert_eq!(super::Sounds::new().pending.len(), files);
+    }
+
+    #[test]
+    fn every_music_stem_is_played() {
+        let files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/music"))
+            .unwrap()
+            .filter(|f| f.as_ref().unwrap().path().extension().is_some_and(|e| e == "ogg"))
+            .count();
+        assert_eq!(super::STEMS.len(), files);
     }
 }

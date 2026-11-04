@@ -1,6 +1,7 @@
 //! How the table looks: the card fronts, the card backs and the felt. Each
 //! comes built in, and more can be added in `themes.txt` next to the saved
-//! records (see `Themes::add_custom` for the format).
+//! records (see `Themes::add_custom` for the format). Also how its buttons
+//! sound, in a few fixed styles.
 
 pub type Rgb = [u8; 3];
 
@@ -64,10 +65,39 @@ pub struct Look {
     pub front: usize,
     pub back: usize,
     pub felt: usize,
+    pub click: usize,
+    pub toggle: usize,
+    /// 0: music on, 1: off (see `MUSIC`).
+    pub music: usize,
+}
+
+impl Look {
+    /// The choice in picker row `kind` (see `KINDS`).
+    pub fn get(&self, kind: usize) -> usize {
+        [self.front, self.back, self.felt, self.click, self.toggle, self.music][kind]
+    }
+
+    pub fn get_mut(&mut self, kind: usize) -> &mut usize {
+        match kind {
+            0 => &mut self.front,
+            1 => &mut self.back,
+            2 => &mut self.felt,
+            3 => &mut self.click,
+            4 => &mut self.toggle,
+            _ => &mut self.music,
+        }
+    }
 }
 
 /// The rows of the theme picker, in order.
-pub const KINDS: [&str; 3] = ["FRONT", "BACK", "FELT"];
+pub const KINDS: [&str; 6] = ["FRONT", "BACK", "FELT", "CLICK", "TOGGLE", "MUSIC"];
+
+/// The styles of the button click and of the strategy chart and theme
+/// picker toggle (assets/sfx/click-*, toggle-*, in this order); the first is
+/// the default.
+pub const CLICKS: [&str; 3] = ["DIE", "CHIP", "CLACK"];
+pub const TOGGLES: [&str; 3] = ["FAN", "SHOVE", "SWISH"];
+pub const MUSIC: [&str; 2] = ["ON", "OFF"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Themes {
@@ -111,15 +141,28 @@ impl Default for Themes {
 impl Themes {
     /// How many looks of the picker's row `kind` there are, and the name of one.
     pub fn count(&self, kind: usize) -> usize {
-        [self.fronts.len(), self.backs.len(), self.felts.len()][kind]
+        [self.fronts.len(), self.backs.len(), self.felts.len(), CLICKS.len(), TOGGLES.len(), MUSIC.len()][kind]
     }
 
     pub fn name(&self, kind: usize, i: usize) -> &str {
         match kind {
             0 => &self.fronts[i].name,
             1 => &self.backs[i].name,
-            _ => &self.felts[i].name,
+            2 => &self.felts[i].name,
+            3 => CLICKS[i],
+            4 => TOGGLES[i],
+            _ => MUSIC[i],
         }
+    }
+
+    /// What a new player gets: ivory cards with charcoal backs, and the first
+    /// of everything else.
+    pub fn default_look(&self) -> Look {
+        let mut look = Look::default();
+        for (kind, name) in [(0, "IVORY"), (1, "CHARCOAL")] {
+            *look.get_mut(kind) = self.find(kind, name).unwrap_or(0);
+        }
+        look
     }
 
     /// The index of the look of row `kind` called `name`, if any.

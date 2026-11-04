@@ -42,7 +42,8 @@ jobs:
           cp web/index.html assets/icon/hushjack.png site/
           cp target/wasm32-unknown-unknown/release/hushjack.wasm site/
           cp "$src/miniquad-$(version miniquad)/js/gl.js" site/
-          cp "$src/quad-snd-$(version quad-snd)/js/audio.js" site/
+          # quad-snd is patched (see Cargo.toml): its copy is in the repository.
+          cp patches/quad-snd/js/audio.js site/
           ls -l site
 
       - uses: actions/upload-pages-artifact@v5

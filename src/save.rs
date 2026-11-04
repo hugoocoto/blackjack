@@ -88,21 +88,26 @@ pub fn save_look(themes: &Themes, look: Look) {
     write("settings.txt", &look_text(themes, look));
 }
 
+/// The settings key of each picker row (see `theme::KINDS`).
+const KEYS: [&str; 6] = ["card_front", "card_back", "felt", "click", "toggle", "music"];
+
 fn look_text(themes: &Themes, look: Look) -> String {
-    let [front, back, felt] = [(0, look.front), (1, look.back), (2, look.felt)].map(|(k, i)| themes.name(k, i));
-    format!("card_front={front}\ncard_back={back}\nfelt={felt}\n")
+    KEYS.iter().enumerate().map(|(k, key)| format!("{key}={}\n", themes.name(k, look.get(k)))).collect()
 }
 
 /// Looks are kept by name; one that's gone (removed from `themes.txt`) falls
 /// back to the first. Older versions kept only the card back, as an index.
 fn parse_look(text: &str, themes: &Themes) -> Look {
-    let pick = |kind: usize, key: &str| {
+    let mut look = themes.default_look();
+    for (kind, key) in KEYS.iter().enumerate() {
         let value = text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')).map(str::trim);
-        value
-            .and_then(|v| themes.find(kind, v).or_else(|| v.parse().ok().filter(|&i| i < themes.count(kind))))
-            .unwrap_or(0)
-    };
-    Look { front: pick(0, "card_front"), back: pick(1, "card_back"), felt: pick(2, "felt") }
+        if let Some(i) =
+            value.and_then(|v| themes.find(kind, v).or_else(|| v.parse().ok().filter(|&i| i < themes.count(kind))))
+        {
+            *look.get_mut(kind) = i;
+        }
+    }
+    look
 }
 
 /// A session's result: initials and the net change, in half credits.
@@ -214,10 +219,13 @@ mod tests {
     fn looks_by_name_and_old_card_back_index() {
         let t = Themes::default();
         let look = parse_look("card_front=IVORY\ncard_back=MIDNIGHT\nfelt=WINE\n", &t);
-        assert_eq!(look, Look { front: 2, back: 2, felt: 2 });
-        assert_eq!(parse_look("card_back=3\n", &t), Look { front: 0, back: 3, felt: 0 });
-        assert_eq!(parse_look("card_back=99\nfelt=GONE\n", &t), Look::default());
-        let look = Look { front: 1, back: 4, felt: 3 };
+        assert_eq!(look, Look { front: 2, back: 2, felt: 2, ..Default::default() });
+        // Nothing saved yet: ivory cards with charcoal backs.
+        let fresh = Look { front: 2, back: 3, ..Default::default() };
+        assert_eq!(parse_look("", &t), fresh);
+        assert_eq!(parse_look("card_back=0\n", &t), Look { back: 0, ..fresh });
+        assert_eq!(parse_look("card_back=99\nfelt=GONE\n", &t), fresh);
+        let look = Look { front: 1, back: 4, felt: 3, click: 2, toggle: 1, music: 1 };
         assert_eq!(parse_look(&look_text(&t, look), &t), look);
     }
 

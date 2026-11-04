@@ -72,7 +72,12 @@ pub const CHART_BUTTON: Rect = Rect { x: 66., y: 232., w: 22., h: 34. };
 pub const THEMES_BUTTON: Rect = Rect { x: 90., y: 232., w: 22., h: 34. };
 /// The theme picker, over the middle of the table: three rows on the left,
 /// a face and a back on the right.
-pub const THEMES_PANEL: Rect = Rect { x: 110., y: 64., w: 262., h: 120. };
+pub const THEMES_PANEL: Rect = Rect { x: 110., y: 56., w: 262., h: 166. };
+/// Picker rows, and the top of each.
+const ROWS: usize = crate::theme::KINDS.len();
+pub fn theme_row_y(kind: usize) -> f32 {
+    THEMES_PANEL.y + 22. + kind as f32 * 21.
+}
 pub const NEXT_BUTTON: Rect = Rect { x: 114., y: 232., w: 178., h: 34. };
 /// The bet amount, between the stepper's arrows.
 pub const BET_PANEL: Rect = Rect { x: 330., y: 232., w: 110., h: 34. };
@@ -344,15 +349,34 @@ pub enum Action {
     Save,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Sfx {
-    Deal,
-    Flip,
-    Shuffle,
+    /// One riffle of the shuffle.
+    Riffle,
+    /// A stack of cards pushed together.
+    Shove,
+    /// A card, or a pile, sliding over the felt.
+    Slide,
+    /// A card laid down or turned over.
+    Place,
+    /// Cards fanned or loaded into the shoe.
+    Fan,
+    /// A chip or two put down (bets).
     Chip,
-    Win,
-    Load,
+    /// Winnings stacked onto the bet.
+    Payout,
+    /// Chips swept off the table.
+    Sweep,
+    /// A button pressed.
+    Click,
+    /// The strategy chart or theme picker opened or closed.
+    Toggle,
+    /// A soft chime over a blackjack or a streak.
+    Chime,
 }
+
+/// The shuffle's sounds, which stop at once when it's skipped.
+pub const SHUFFLE_SFX: [Sfx; 4] = [Sfx::Riffle, Sfx::Shove, Sfx::Slide, Sfx::Fan];
 
 pub struct Floater {
     pub text: String,
@@ -465,8 +489,9 @@ pub struct Game {
     pub run: f32,
     /// `time` when the streak last grew (it's celebrated from 2 in a row).
     pub streak_at: f32,
-    /// Sounds to play a moment from now: (sound, `time` due).
-    sfx_later: Vec<(Sfx, f32)>,
+    /// Sounds to play a moment from now, so they land with their animation:
+    /// (sound, volume, `time` due).
+    sfx_later: Vec<(Sfx, f32, f32)>,
     /// How far the dust has drifted; it sinks, settles on a losing run and
     /// rises on a winning one.
     pub drift: f32,
@@ -500,7 +525,10 @@ pub struct Game {
     pub banner: Option<(String, f32)>,
     /// How hard the table shakes, 0..1; fades out by itself.
     pub shake: f32,
-    pub sfx: Vec<Sfx>,
+    /// Sounds to play this frame, and their volume (1 = the sound's own).
+    pub sfx: Vec<(Sfx, f32)>,
+    /// The shuffle was skipped: its sounds still playing should stop.
+    pub hush_shuffle: bool,
     /// Seconds since a card left the shoe; the next card then slides into the mouth.
     pub since_deal: f32,
     pub show_chart: bool,
@@ -576,6 +604,7 @@ impl Game {
             banner: None,
             shake: 0.,
             sfx: Vec::new(),
+            hush_shuffle: false,
             since_deal: 10.,
             show_chart: false,
         };
@@ -606,7 +635,32 @@ impl Game {
         self.floaters.push(Floater { text, pos, t: 0., color });
     }
 
+    fn sound(&mut self, s: Sfx, volume: f32) {
+        self.sfx.push((s, volume));
+    }
+
+    /// A sound `delay` seconds from now.
+    fn sound_in(&mut self, s: Sfx, volume: f32, delay: f32) {
+        self.sfx_later.push((s, volume, self.time + delay));
+    }
+
     // ---------------------------------------------------------------- shuffle
+
+    /// The sound of a shuffle step as it starts (`d`: how long it lasts).
+    /// Quick re-squares between the big moves make none. All of it sits a
+    /// little under the music: the shuffle is long and busy.
+    fn shuffle_sound(&mut self, step: ShStep, d: f32) {
+        match step {
+            ShStep::Gather | ShStep::Push => self.sound(Sfx::Shove, 0.7),
+            ShStep::Moves(_) if d >= 0.18 => self.sound(Sfx::Slide, 0.55),
+            ShStep::Moves(_) => {}
+            ShStep::Riffle { .. } => self.sound(Sfx::Riffle, 0.65),
+            ShStep::LooseRiffle { .. } => self.sound(Sfx::Riffle, 0.45),
+            ShStep::Strip { .. } => self.sound(Sfx::Slide, 0.4),
+            ShStep::CutCards => self.sound(Sfx::Place, 0.7),
+            ShStep::Roll => self.sound(Sfx::Fan, 0.55),
+        }
+    }
 
     fn begin_shuffle(&mut self) {
         self.discard += self.to_discard.len();
@@ -759,6 +813,8 @@ impl Game {
             }
             self.pressed.retain(|p| p.0.action != b.action);
             self.pressed.push((b, self.time));
+            let toggle = matches!(b.action, Action::Chart | Action::Themes);
+            self.sound(if toggle { Sfx::Toggle } else { Sfx::Click }, 1.);
         }
     }
 
@@ -780,15 +836,15 @@ impl Game {
     /// previous or next one, wrapping round, and names it in the banner.
     pub fn step_look(&mut self, kind: usize, step: i8) {
         let n = self.themes.count(kind);
-        let i = match kind {
-            0 => &mut self.look.front,
-            1 => &mut self.look.back,
-            _ => &mut self.look.felt,
-        };
+        let i = self.look.get_mut(kind);
         *i = (*i + n).wrapping_add_signed(step as isize) % n;
         let name = self.themes.name(kind, *i);
         self.banner = Some((format!("{}: {name}", crate::theme::KINDS[kind]), 1.2));
         self.theme_row = kind;
+        // A new click is heard on the arrow's own click; a new toggle needs a turn.
+        if kind == 4 {
+            self.sound_in(Sfx::Toggle, 1., 0.12);
+        }
     }
 
     /// The picker's arrows, when it's open: a back and an on button per row.
@@ -798,10 +854,10 @@ impl Game {
         }
         let grey = Color::from_rgba(90, 96, 120, 255);
         let mut b = Vec::new();
-        for kind in 0..3 {
-            let y = THEMES_PANEL.y + 24. + kind as f32 * 26.;
+        for kind in 0..crate::theme::KINDS.len() {
+            let y = theme_row_y(kind);
             for (x, label, step) in [(THEMES_PANEL.x + 52., "<", -1), (THEMES_PANEL.x + 142., ">", 1)] {
-                let rect = Rect::new(x, y, 18., 20.);
+                let rect = Rect::new(x, y, 18., 19.);
                 b.push(Button { rect, label, key: "", action: Action::Theme(kind, step), enabled: true, color: grey, status: false });
             }
         }
@@ -951,8 +1007,8 @@ impl Game {
         let rate = if goal > self.run && self.run < 0. { 2.5 } else { 0.8 };
         self.run += (goal - self.run) * (1. - (-dt * rate).exp());
         let now = self.time;
-        self.sfx.extend(self.sfx_later.iter().filter(|s| s.1 <= now).map(|s| s.0));
-        self.sfx_later.retain(|s| s.1 > now);
+        self.sfx.extend(self.sfx_later.iter().filter(|s| s.2 <= now).map(|s| (s.0, s.1)));
+        self.sfx_later.retain(|s| s.2 > now);
         self.drift += dt * (1. - 1.6 * self.run.max(0.)) * (1. - 0.6 * (-self.run).max(0.));
         let goal = if self.show_chart { 1. } else { 0. };
         self.chart_in += (goal - self.chart_in).clamp(-dt * 4., dt * 4.);
@@ -1031,8 +1087,8 @@ impl Game {
         if self.show_themes {
             for a in &actions {
                 match a {
-                    Action::BetUp => self.theme_row = (self.theme_row + 2) % 3,
-                    Action::BetDown => self.theme_row = (self.theme_row + 1) % 3,
+                    Action::BetUp => self.theme_row = (self.theme_row + ROWS - 1) % ROWS,
+                    Action::BetDown => self.theme_row = (self.theme_row + 1) % ROWS,
                     _ => {}
                 }
             }
@@ -1076,17 +1132,15 @@ impl Game {
         match self.phase {
             Phase::Shuffle => {
                 let i = self.shuffle_step_index(self.t);
-                if i != self.shuffle_step_index(self.t - dt) {
-                    match self.plan.get(i).map(|s| s.0) {
-                        Some(ShStep::Riffle { .. } | ShStep::LooseRiffle { .. }) => self.sfx.push(Sfx::Shuffle),
-                        Some(ShStep::Moves(_) | ShStep::Roll) => self.sfx.push(Sfx::Deal),
-                        Some(ShStep::Strip { .. } | ShStep::CutCards) => self.sfx.push(Sfx::Flip),
-                        Some(ShStep::Push) => self.sfx.push(Sfx::Load),
-                        _ => {}
-                    }
+                let started = self.t - dt <= 0. && self.t > 0.;
+                if (started || i != self.shuffle_step_index(self.t - dt))
+                    && let Some(&(step, d)) = self.plan.get(i)
+                {
+                    self.shuffle_sound(step, d);
                 }
                 if confirm && self.t > 0.2 {
                     self.t = self.shuffle_time();
+                    self.hush_shuffle = true;
                 }
                 if self.t >= self.shuffle_time() {
                     self.phase = Phase::Cut;
@@ -1112,24 +1166,25 @@ impl Game {
                     self.cut = (PENETRATION as i32 + jitter) as usize;
                     self.phase = Phase::CutAnim;
                     self.t = 0.;
-                    self.sfx.push(Sfx::Flip);
+                    self.sound(Sfx::Place, 1.);
                 }
             }
             Phase::CutAnim => {
                 let at = |k: f32, t: f32, dt: f32| t >= k && t - dt < k;
                 if at(CA_INSERT, self.t, dt) || at(CA_MARK, self.t, dt) || at(CA_BACK, self.t, dt) {
-                    self.sfx.push(Sfx::Flip);
+                    self.sound(Sfx::Place, 0.8);
                 }
                 if at(CA_PULL, self.t, dt) {
-                    self.sfx.push(Sfx::Deal);
+                    self.sound(Sfx::Slide, 1.);
                 }
                 if at(CA_LOAD, self.t, dt) {
-                    self.sfx.push(Sfx::Load);
+                    self.sound(Sfx::Fan, 1.);
                 }
                 // Space / click skips the rest, like the shuffle.
                 if confirm && self.t > 0.2 && self.t < CA_RETURN {
                     if self.t < CA_LOAD {
-                        self.sfx.push(Sfx::Load);
+                        self.hush_shuffle = true;
+                        self.sound(Sfx::Fan, 1.);
                     }
                     self.t = CA_RETURN;
                 }
@@ -1155,11 +1210,11 @@ impl Game {
                         match a {
                             Action::BetUp if self.bet_idx + 1 < BETS.len() => {
                                 self.bet_idx += 1;
-                                self.sfx.push(Sfx::Chip);
+                                self.sound(Sfx::Chip, 0.6);
                             }
                             Action::BetDown if self.bet_idx > 0 => {
                                 self.bet_idx -= 1;
-                                self.sfx.push(Sfx::Chip);
+                                self.sound(Sfx::Chip, 0.6);
                             }
                             _ => {}
                         }
@@ -1223,7 +1278,7 @@ impl Game {
         let card = self.draw_card();
         self.to_discard.push(Sprite::new(card, false));
         self.since_deal = 0.;
-        self.sfx.push(Sfx::Deal);
+        self.sound(Sfx::Slide, 0.8);
     }
 
     fn sweep_table(&mut self) {
@@ -1232,7 +1287,7 @@ impl Game {
             moved.extend(h.cards);
         }
         if !moved.is_empty() {
-            self.sfx.push(Sfx::Deal);
+            self.sound(Sfx::Shove, 0.7);
         }
         self.to_discard.extend(moved);
         self.insurance = 0;
@@ -1248,7 +1303,7 @@ impl Game {
         self.player_turn = false;
         self.phase = Phase::Round;
         self.t = 0.;
-        self.sfx.push(Sfx::Chip);
+        self.sound(Sfx::Chip, 1.);
         self.wait = 0.15;
         self.script.extend([
             Step::Deal(Target::Player(0), true),
@@ -1269,7 +1324,7 @@ impl Game {
                     // Half the main bet, in half credits.
                     self.insurance = self.hands[0].bet;
                     self.credits -= self.insurance;
-                    self.sfx.push(Sfx::Chip);
+                    self.sound(Sfx::Chip, 1.);
                 }
                 self.wait = 0.3;
                 self.script.push_back(Step::Peek);
@@ -1284,7 +1339,7 @@ impl Game {
                 self.credits -= bet * 2;
                 self.hands[h].bet *= 2;
                 self.hands[h].doubled = true;
-                self.sfx.push(Sfx::Chip);
+                self.sound(Sfx::Chip, 1.);
                 self.script.extend([Step::Deal(Target::Player(h), true), Step::Check]);
             }
             Action::Split => {
@@ -1297,7 +1352,7 @@ impl Game {
                 nh.split_aces = aces;
                 self.hands[h].split_aces = aces;
                 self.hands.insert(h + 1, nh);
-                self.sfx.push(Sfx::Chip);
+                self.sound(Sfx::Chip, 1.);
                 self.wait = 0.2;
                 self.script.extend([Step::Deal(Target::Player(h), true), Step::Check]);
             }
@@ -1350,7 +1405,7 @@ impl Game {
                         self.hands[h].cards.push(s);
                     }
                 }
-                self.sfx.push(Sfx::Deal);
+                self.sound(Sfx::Slide, 1.);
                 self.since_deal = 0.;
                 self.wait += DEAL_WAIT;
             }
@@ -1370,9 +1425,10 @@ impl Game {
                         // Insurance pays 2:1.
                         self.credits += self.insurance * 3;
                         self.floater_at(self.insurance * 2, INSURANCE_FLOATER_POS);
-                        self.sfx.push(Sfx::Win);
+                        self.sound_in(Sfx::Payout, 0.8, 0.4);
                     } else {
                         self.floater_at(-self.insurance, INSURANCE_FLOATER_POS);
+                        self.sound_in(Sfx::Sweep, 0.7, 0.3);
                     }
                     self.insurance_paid = Some(dealer_bj);
                     self.insurance_at = self.time;
@@ -1395,6 +1451,7 @@ impl Game {
                     h.outcome_at = self.time;
                     let bet = h.bet;
                     self.mood = self.mood.min(-0.6);
+                    self.sound_in(Sfx::Sweep, 1., 0.3);
                     self.floater(-bet * 2);
                     self.shake = self.shake.max(0.4);
                     self.wait += 0.3;
@@ -1421,7 +1478,7 @@ impl Game {
             Step::DealerTurn => {
                 self.player_turn = false;
                 self.dealer[1].face_up = true;
-                self.sfx.push(Sfx::Flip);
+                self.sound(Sfx::Place, 1.);
                 self.wait += 0.4;
                 let live = self.hands.iter().any(|h| h.outcome.is_none());
                 let natural = self.hands.len() == 1 && is_blackjack(&self.hands[0].plain());
@@ -1450,6 +1507,7 @@ impl Game {
         let single = self.hands.len() == 1;
         let mut shown = 0;
         let mut any_win = false;
+        let mut any_loss = false;
         let mut any_new = false;
         let now = self.time;
         for h in &mut self.hands {
@@ -1475,6 +1533,7 @@ impl Game {
                 self.credits += stake + net;
             }
             any_win |= net > 0;
+            any_loss |= net < 0;
             shown += net;
             h.outcome = Some((o, net));
             h.outcome_at = now;
@@ -1483,8 +1542,15 @@ impl Game {
         if any_new {
             self.floater(shown);
         }
+        // As the chips move: winnings land on the bet, losses go to the house.
         if any_win {
-            self.sfx.push(Sfx::Win);
+            self.sound_in(Sfx::Payout, 1., 0.4);
+        }
+        if any_loss {
+            self.sound_in(Sfx::Sweep, 1., 0.3);
+        }
+        if self.hands.iter().any(|h| h.outcome.is_some_and(|o| o.0 == Outcome::Blackjack) && h.outcome_at == now) {
+            self.sound_in(Sfx::Chime, 1., 0.1);
         }
         // The whole round, busts included.
         let round: i64 = self.hands.iter().filter_map(|h| h.outcome.map(|o| o.1)).sum();
@@ -1495,10 +1561,9 @@ impl Game {
                 // Its badge pops as the winnings land, to a ripple of chips
                 // that grows with the streak.
                 self.streak_at = self.time;
-                let pop = self.time + STREAK_POP;
-                self.sfx_later.push((Sfx::Win, pop));
+                self.sound_in(Sfx::Chime, 0.8, STREAK_POP);
                 for i in 0..(self.streak - 1).min(4) {
-                    self.sfx_later.push((Sfx::Chip, pop + 0.07 * (i + 1) as f32));
+                    self.sound_in(Sfx::Chip, 0.5, STREAK_POP + 0.07 * (i + 1) as f32);
                 }
             }
         } else if round < 0 {
@@ -1841,6 +1906,32 @@ mod tests {
             }
         }
         panic!("no seed found");
+    }
+
+    #[test]
+    fn the_shuffle_sounds_once_per_step_and_hushes_when_skipped() {
+        let mut g = Game::new();
+        let riffles = g.plan.iter().filter(|s| matches!(s.0, ShStep::Riffle { .. } | ShStep::LooseRiffle { .. })).count();
+        let quick = g.plan.iter().filter(|s| matches!(s.0, ShStep::Moves(_)) && s.1 < 0.18).count();
+        assert!(quick > 0);
+        let mut heard = Vec::new();
+        while g.phase == Phase::Shuffle {
+            g.update(1. / 60., &idle());
+            heard.extend(g.sfx.drain(..).map(|s| s.0));
+        }
+        assert_eq!(heard.iter().filter(|s| **s == Sfx::Riffle).count(), riffles);
+        // Every other step makes one sound; the quick re-squares none.
+        assert_eq!(heard.len(), g.plan.len() - quick);
+        assert_eq!(heard.first(), Some(&Sfx::Shove), "gathering the cards");
+        assert!(!g.hush_shuffle);
+
+        let mut g = Game::new();
+        for _ in 0..30 {
+            g.update(1. / 60., &idle());
+        }
+        g.update(1. / 60., &Input { confirm: true, ..idle() });
+        assert!(g.hush_shuffle);
+        assert_eq!(g.phase, Phase::Cut);
     }
 
     #[test]

@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["blackjack", "game", "cards", "casino", "pixel-art"]
 categories = ["games"]
 # Only what the build embeds (assets/), plus the README and licenses.
-include = ["/src", "/assets/cards.png", "/assets/font.ttf", "/assets/sfx", "/assets/icon/window-*.rgba", "/assets/icon/hushjack.svg", "/assets/icon/hushjack.png", "/packaging/linux/hushjack.desktop", "/assets/licenses", "/README.md", "/LICENSE"]
+include = ["/src", "/assets/cards.png", "/assets/font.ttf", "/assets/sfx", "/assets/music/*.ogg", "/assets/icon/window-*.rgba", "/assets/icon/hushjack.svg", "/assets/icon/hushjack.png", "/packaging/linux/hushjack.desktop", "/assets/licenses", "/README.md", "/LICENSE"]
 
 [dependencies]
 fontdue = "0.9.5"
@@ -41,3 +41,10 @@ build_targets = ["armv7-linux-androideabi", "aarch64-linux-android", "x86_64-lin
 
 [package.metadata.android.activity_attributes]
 "android:screenOrientation" = "userLandscape"
+
+# quad-snd 0.2.8 (macroquad's audio) cuts looping sounds where they wrap:
+# patches/quad-snd is that release with the one-line fix (in src/mixer.rs).
+# crates.io ignores this, so the music's length also avoids the bug where it
+# can (see assets/music/compose.py).
+[patch.crates-io]
+quad-snd = { path = "patches/quad-snd" }
