@@ -15,7 +15,7 @@ conflicts=("$_pkgname")
 # The binary is already stripped (see Cargo.toml), so there's nothing to debug.
 options=('!debug')
 source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$_pkgname-linux-x86_64.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('3cb805f42e5046ca71d5df28bf9a9734a98361a1bb0462f8ce489136e8501506')
 
 package() {
   cd "$_pkgname-linux-x86_64"

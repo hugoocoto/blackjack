@@ -23,7 +23,8 @@ run `hushjack`. The game is a single file.
 - **Linux:** x86_64 only. It needs ALSA (`libasound2`), which most desktops
   already have. Run `./install.sh` in the unpacked folder to add it to your
   menu (it installs into `~/.local`, no root needed; `./install.sh --uninstall`
-  removes it). On Arch, install `hushjack-bin` or `hushjack-git` from the AUR.
+  removes it). On Arch, you can build a package from this repo:
+  `cd packaging/aur/hushjack-bin && makepkg -si`.
 
 ## Play
 

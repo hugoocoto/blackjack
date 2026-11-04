@@ -16,6 +16,6 @@ pkgbase = hushjack-bin
 	conflicts = hushjack
 	options = !debug
 	source = hushjack-0.2.0.tar.gz::https://github.com/hugoocoto/blackjack/releases/download/v0.2.0/hushjack-linux-x86_64.tar.gz
-	sha256sums = SKIP
+	sha256sums = 3cb805f42e5046ca71d5df28bf9a9734a98361a1bb0462f8ce489136e8501506
 
 pkgname = hushjack-bin
