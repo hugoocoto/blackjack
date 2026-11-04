@@ -67,3 +67,8 @@ Rust (stable). On Linux, sound needs ALSA.
 
 The cards, sounds and font are by [Kenney](https://kenney.nl), under the CC0
 license. The license files are in `assets/licenses/`.
+
+## License
+
+The code is licensed under the GNU General Public License, version 3 or
+later. See [LICENSE](LICENSE).

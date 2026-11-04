@@ -65,7 +65,7 @@ jobs:
         run: |
           dir="blackjack-${{ matrix.name }}"
           mkdir "$dir"
-          cp README.md "$dir/"
+          cp README.md LICENSE "$dir/"
           cp -r assets/licenses "$dir/"
           if [ "${{ runner.os }}" = Windows ]; then
             cp target/release/blackjack.exe "$dir/"
