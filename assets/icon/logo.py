@@ -11,12 +11,7 @@ P = {
     "h": "#3a8c63",  # felt light
     "W": "#f2eee4",  # card face
     "w": "#c9c4b8",  # card shade
-    "B": "#3e5aa8",  # card back
-    "b": "#7892d6",  # card back pattern
     "S": "#1e1e2a",  # spade
-    "Y": "#f0b848",  # moon
-    "y": "#c88a2c",  # moon shade
-    "*": "#fff6d8",  # star
 }
 px: list[list[str | None]] = [[None] * N for _ in range(N)]
 
@@ -60,29 +55,20 @@ for y in range(2, 6):
             px[y][x] = "h"
 
 
-def card(x0, y0, x1, y1, face):
+def card(x0, y0, x1, y1):
     rect(x0, y0, x1, y1, "K")
-    put(x0, y0, None if px[y0][x0] is None else "G")
     for (x, y) in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
         put(x, y, "G")
-    if face:
-        rect(x0 + 1, y0 + 1, x1 - 1, y1 - 1, "W")
-        rect(x1 - 1, y0 + 2, x1 - 1, y1 - 1, "w")
-        rect(x0 + 2, y1 - 1, x1 - 1, y1 - 1, "w")
-    else:
-        rect(x0 + 1, y0 + 1, x1 - 1, y1 - 1, "W")
-        rect(x0 + 2, y0 + 2, x1 - 2, y1 - 2, "B")
-        for y in range(y0 + 3, y1 - 2):
-            for x in range(x0 + 3, x1 - 2):
-                if (x + y) % 3 == 0:
-                    put(x, y, "b")
+    rect(x0 + 1, y0 + 1, x1 - 1, y1 - 1, "W")
+    rect(x1 - 1, y0 + 2, x1 - 1, y1 - 1, "w")
+    rect(x0 + 2, y1 - 1, x1 - 1, y1 - 1, "w")
 
 
-# Card back behind, the ace of spades in front.
-card(4, 12, 16, 28, False)
-card(10, 9, 23, 28, True)
-sprite(12, 11, [".S.", "S.S", "SSS", "S.S", "S.S"])
-sprite(13, 15, [
+# The ace of spades in the middle, with its index in two corners.
+card(8, 5, 23, 26)
+sprite(10, 7, [".S.", "S.S", "SSS", "S.S", "S.S"])
+sprite(18, 19, ["S.S", "S.S", "SSS", "S.S", ".S."])
+sprite(12, 11, [
     "...S...",
     "..SSS..",
     ".SSSSS.",
@@ -92,20 +78,6 @@ sprite(13, 15, [
     "...S...",
     "..SSS..",
 ])
-
-# Crescent moon, top right, and a few stars.
-sprite(23, 3, [
-    "..YYYY.",
-    ".YYYy..",
-    "YYYy...",
-    "YYYy...",
-    "YYYy...",
-    "YYYy...",
-    ".YYYy..",
-    "..YYYY.",
-])
-for (x, y) in ((6, 5), (15, 4), (27, 14)):
-    put(x, y, "*")
 
 if "--text" in sys.argv:
     for row in px:
