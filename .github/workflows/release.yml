@@ -105,6 +105,11 @@ jobs:
       - name: Update cargo quad-apk
         run: cargo install --force --locked --git https://github.com/not-fl3/cargo-quad-apk --rev d411c8fe1c08339e46d7dc6b40ac04ea5e3a01b6 cargo-quad-apk
 
+      # The newer cargo quad-apk zips the compiled Java into the APK with zip,
+      # which the image (Arch Linux) doesn't have.
+      - name: Install zip
+        run: pacman -Sy --noconfirm --needed zip
+
       # cargo quad-apk pastes miniquad's Android glue into src/main.rs, so it
       # has to follow the game's edition (2024): #[no_mangle] needs unsafe(...).
       - name: Make miniquad's Android glue edition 2024
