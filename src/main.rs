@@ -1,3 +1,6 @@
+// No console window next to the game on Windows (debug builds keep it).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod cards;
 mod game;
 mod render;

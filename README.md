@@ -6,7 +6,24 @@ you cut, and you play from the shoe for as long as you like.
 
 ![Gameplay](docs/gameplay.gif)
 
+## Download
+
+Get the build for your system from the
+[releases page](https://github.com/hugoocoto/blackjack/releases), unpack it and
+run `blackjack`. The game is a single file.
+
+- **Windows:** the game isn't signed, so SmartScreen may warn you. Click
+  *More info*, then *Run anyway*.
+- **macOS:** the game isn't signed either, so macOS blocks it the first time.
+  Run `xattr -d com.apple.quarantine blackjack` in the unpacked folder, or
+  allow it in *System Settings → Privacy & Security*. The build works on
+  Apple Silicon and Intel Macs.
+- **Linux:** x86_64 only. It needs ALSA (`libasound2`), which most desktops
+  already have.
+
 ## Play
+
+To build it yourself instead:
 
 ```sh
 cargo run --release
