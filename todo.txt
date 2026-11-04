@@ -1,0 +1,2 @@
+- when shuffleing, the cards from behind are in front of the cards in the middle
+- add: not insurance on <space>

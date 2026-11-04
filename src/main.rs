@@ -117,7 +117,9 @@ async fn main() {
     // Test hooks: BJ_AUTO=1 plays by itself, BJ_SPEED=n fast-forwards,
     // BJ_STACK=r,r,.. stacks the first ranks,
     // BJ_WATCH=1 lets it watch the shuffle, BJ_CHART=1 opens the strategy chart, BJ_MUTE=1 disables sound,
-    // BJ_SHOTS=f1,f2,.. saves the frame into BJ_SHOT_DIR and quits after the last.
+    // BJ_SHOTS=f1,f2,.. saves the frame (the 480x270 game, not the window) into
+    // BJ_SHOT_DIR and quits after the last; frames then step a fixed 1/60 s, so a
+    // recording doesn't depend on the monitor or on how slow saving is.
     let auto = std::env::var("BJ_AUTO").is_ok();
     let watch = std::env::var("BJ_WATCH").is_ok();
     let speed: f32 = std::env::var("BJ_SPEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1.);
@@ -212,7 +214,7 @@ async fn main() {
                 game.shoe[game.next + i] = cards::Card { rank: r, suit: (i % 4) as u8 };
             }
         }
-        let dt = get_frame_time().min(1. / 20.) * speed;
+        let dt = if shots.is_empty() { get_frame_time().min(1. / 20.) } else { 1. / 60. } * speed;
         game.update(dt, &input);
 
         for s in game.sfx.drain(..) {
@@ -235,7 +237,7 @@ async fn main() {
 
         frame += 1;
         if shots.contains(&frame) {
-            get_screen_data().export_png(&format!("{shot_dir}/shot_{frame:05}.png"));
+            rt.texture.get_texture_data().export_png(&format!("{shot_dir}/shot_{frame:05}.png"));
             if shots.iter().max() == Some(&frame) {
                 break;
             }
