@@ -1,6 +1,0 @@
-# makepkg leftovers
-*/src/
-*/pkg/
-*.tar.gz
-*.pkg.tar.*
-hushjack-git/hushjack/

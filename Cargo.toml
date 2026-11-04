@@ -3,6 +3,13 @@ name = "hushjack"
 version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
+description = "A calm pixel-art blackjack table: a hand-shuffled 6-deck shoe, cutting, splitting and a strategy chart"
+repository = "https://github.com/hugoocoto/blackjack"
+readme = "README.md"
+keywords = ["blackjack", "game", "cards", "casino", "pixel-art"]
+categories = ["games"]
+# Only what the build embeds (assets/), plus the README and licenses.
+include = ["/src", "/assets/cards.png", "/assets/font.ttf", "/assets/sfx", "/assets/icon/window-*.rgba", "/assets/licenses", "/README.md", "/LICENSE"]
 
 [dependencies]
 fontdue = "0.9.5"
