@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cards;
+mod desktop;
 mod game;
 mod render;
 mod strategy;
@@ -12,6 +13,11 @@ use macroquad::prelude::*;
 use macroquad::rand;
 
 fn conf() -> Conf {
+    // macroquad calls this before it opens the window, so flags like
+    // --install-desktop are handled here and never show the game.
+    if let Some(code) = desktop::run_flags() {
+        std::process::exit(code);
+    }
     Conf {
         window_title: "Hushjack".into(),
         window_width: 1440,
@@ -70,10 +76,10 @@ impl Sounds {
     }
 
     async fn load_one(&mut self) {
-        if let Some((sfx, bytes)) = self.pending.pop() {
-            if let Ok(s) = load_sound_from_bytes(bytes).await {
-                self.banks[sfx as usize].push(s);
-            }
+        if let Some((sfx, bytes)) = self.pending.pop()
+            && let Ok(s) = load_sound_from_bytes(bytes).await
+        {
+            self.banks[sfx as usize].push(s);
         }
     }
 
@@ -171,8 +177,8 @@ async fn main() {
                 actions.push(a);
             }
         }
-        let left = is_key_pressed(KeyCode::Left) || is_key_down(KeyCode::Left) && frame % 3 == 0;
-        let right = is_key_pressed(KeyCode::Right) || is_key_down(KeyCode::Right) && frame % 3 == 0;
+        let left = is_key_pressed(KeyCode::Left) || is_key_down(KeyCode::Left) && frame.is_multiple_of(3);
+        let right = is_key_pressed(KeyCode::Right) || is_key_down(KeyCode::Right) && frame.is_multiple_of(3);
         if game.phase == game::Phase::Bet {
             if is_key_pressed(KeyCode::Left) {
                 actions.push(Action::BetDown);
@@ -199,11 +205,11 @@ async fn main() {
         };
         last_mouse = mouse;
 
-        if game.phase == game::Phase::Bet {
-            if let Some(ranks) = stack.take() {
-                for (i, r) in ranks.into_iter().enumerate() {
-                    game.shoe[game.next + i] = cards::Card { rank: r, suit: (i % 4) as u8 };
-                }
+        if game.phase == game::Phase::Bet
+            && let Some(ranks) = stack.take()
+        {
+            for (i, r) in ranks.into_iter().enumerate() {
+                game.shoe[game.next + i] = cards::Card { rank: r, suit: (i % 4) as u8 };
             }
         }
         let dt = get_frame_time().min(1. / 20.) * speed;

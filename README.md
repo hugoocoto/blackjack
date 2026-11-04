@@ -29,7 +29,10 @@ With Rust installed, you can also get it from [crates.io](https://crates.io/crat
 
 ```sh
 cargo install hushjack
+hushjack --install-desktop   # optional: add it to your app menu (Linux)
 ```
+
+`hushjack --uninstall-desktop` removes the menu entry again.
 
 On Linux this needs the ALSA development files (`libasound2-dev` on
 Debian/Ubuntu, `alsa-lib-devel` on Fedora, `alsa-lib` on Arch).

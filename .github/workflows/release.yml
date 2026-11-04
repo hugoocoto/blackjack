@@ -73,8 +73,7 @@ jobs:
           else
             cp target/release/hushjack "$dir/"
             if [ "${{ runner.os }}" = Linux ]; then
-              cp packaging/linux/install.sh packaging/linux/hushjack.desktop \
-                assets/icon/hushjack.svg assets/icon/hushjack.png "$dir/"
+              cp packaging/linux/install.sh "$dir/"
             fi
             tar czf "$dir.tar.gz" "$dir"
           fi
