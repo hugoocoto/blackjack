@@ -41,6 +41,9 @@ build_targets = ["armv7-linux-androideabi", "aarch64-linux-android", "x86_64-lin
 
 [package.metadata.android.activity_attributes]
 "android:screenOrientation" = "userLandscape"
+# Android 12+ won't install an app targeting it (android_version above)
+# whose launcher activity doesn't say this; cargo quad-apk leaves it out.
+"android:exported" = "true"
 
 # quad-snd 0.2.8 (macroquad's audio) cuts looping sounds where they wrap:
 # patches/quad-snd is that release with the one-line fix (in src/mixer.rs).
