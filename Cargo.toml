@@ -27,13 +27,16 @@ strip = true
 [profile.dev.package."*"]
 opt-level = 3
 
-# Android build (cargo quad-apk, see .github/workflows/android.yml).
+# Android build (cargo quad-apk, see .github/workflows/release.yml).
 [package.metadata.android]
 package_name = "io.github.hugoocoto.hushjack"
 label = "Hushjack"
 res = "packaging/android/res"
 icon = "@mipmap/ic_launcher"
 fullscreen = true
+# The only platform in the build image (notfl3/cargo-apk); cargo quad-apk
+# would look for 36 otherwise.
+android_version = 31
 build_targets = ["armv7-linux-androideabi", "aarch64-linux-android", "x86_64-linux-android"]
 
 [package.metadata.android.activity_attributes]

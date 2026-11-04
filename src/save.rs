@@ -1,7 +1,9 @@
 //! What the game keeps between sessions, in small text files in the user's
-//! data folder: the chosen card back, and the records board (the best wins
-//! and the worst losses of whole sessions).
+//! data folder (in the browser, in its local storage): the chosen looks, any
+//! custom ones, and the records board (the best wins and the worst losses of
+//! whole sessions).
 
+use crate::theme::{Look, Themes};
 use std::path::PathBuf;
 use std::{env, fs};
 
@@ -9,7 +11,8 @@ use std::{env, fs};
 pub const BOARD: usize = 5;
 
 /// The per-user folder for the game's files, or None where there is none
-/// (the web build; Android, where the app's own folder isn't wired up yet).
+/// (the web build, see `web`; Android, where the app's own folder isn't
+/// wired up yet).
 fn dir() -> Option<PathBuf> {
     if cfg!(any(target_arch = "wasm32", target_os = "android")) {
         return None;
@@ -26,26 +29,80 @@ fn dir() -> Option<PathBuf> {
 }
 
 fn read(name: &str) -> String {
+    #[cfg(target_arch = "wasm32")]
+    return web::read(name);
     dir().and_then(|d| fs::read_to_string(d.join(name)).ok()).unwrap_or_default()
 }
 
 fn write(name: &str, text: &str) {
+    #[cfg(target_arch = "wasm32")]
+    return web::write(name, text);
     let Some(d) = dir() else { return };
     if let Err(e) = fs::create_dir_all(&d).and_then(|_| fs::write(d.join(name), text)) {
         eprintln!("hushjack: couldn't save {name}: {e}");
     }
 }
 
-/// The chosen card back (an index into `render::BACKS`).
-pub fn load_card_back() -> usize {
-    read("settings.txt")
-        .lines()
-        .find_map(|l| l.strip_prefix("card_back=")?.trim().parse().ok())
-        .unwrap_or(0)
+/// The browser's local storage, through the functions `web/index.html` adds.
+#[cfg(target_arch = "wasm32")]
+mod web {
+    unsafe extern "C" {
+        fn hj_storage_len(key: *const u8, key_len: usize) -> i32;
+        fn hj_storage_read(key: *const u8, key_len: usize, buf: *mut u8);
+        fn hj_storage_write(key: *const u8, key_len: usize, text: *const u8, text_len: usize);
+    }
+
+    pub fn read(name: &str) -> String {
+        // SAFETY: the pointers and lengths come from live slices, and the
+        // buffer is as long as the length the page reported.
+        unsafe {
+            let Ok(len) = usize::try_from(hj_storage_len(name.as_ptr(), name.len())) else { return String::new() };
+            let mut buf = vec![0u8; len];
+            hj_storage_read(name.as_ptr(), name.len(), buf.as_mut_ptr());
+            String::from_utf8(buf).unwrap_or_default()
+        }
+    }
+
+    pub fn write(name: &str, text: &str) {
+        // SAFETY: the pointers and lengths come from live slices.
+        unsafe { hj_storage_write(name.as_ptr(), name.len(), text.as_ptr(), text.len()) }
+    }
 }
 
-pub fn save_card_back(i: usize) {
-    write("settings.txt", &format!("card_back={i}\n"));
+/// The built-in looks plus the ones in `themes.txt` (see
+/// `Themes::add_custom`); lines it can't read are reported and skipped.
+pub fn load_themes() -> Themes {
+    let mut themes = Themes::default();
+    for e in themes.add_custom(&read("themes.txt")) {
+        eprintln!("hushjack: {e}");
+    }
+    themes
+}
+
+/// The chosen looks (see `theme`).
+pub fn load_look(themes: &Themes) -> Look {
+    parse_look(&read("settings.txt"), themes)
+}
+
+pub fn save_look(themes: &Themes, look: Look) {
+    write("settings.txt", &look_text(themes, look));
+}
+
+fn look_text(themes: &Themes, look: Look) -> String {
+    let [front, back, felt] = [(0, look.front), (1, look.back), (2, look.felt)].map(|(k, i)| themes.name(k, i));
+    format!("card_front={front}\ncard_back={back}\nfelt={felt}\n")
+}
+
+/// Looks are kept by name; one that's gone (removed from `themes.txt`) falls
+/// back to the first. Older versions kept only the card back, as an index.
+fn parse_look(text: &str, themes: &Themes) -> Look {
+    let pick = |kind: usize, key: &str| {
+        let value = text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')).map(str::trim);
+        value
+            .and_then(|v| themes.find(kind, v).or_else(|| v.parse().ok().filter(|&i| i < themes.count(kind))))
+            .unwrap_or(0)
+    };
+    Look { front: pick(0, "card_front"), back: pick(1, "card_back"), felt: pick(2, "felt") }
 }
 
 /// A session's result: initials and the net change, in half credits.
@@ -151,6 +208,17 @@ mod tests {
         assert_eq!(s.add("III", -90), Some((false, 0)));
         assert_eq!(names(&s.losses), ["III", "HHH"]);
         assert!(!s.is_record(0));
+    }
+
+    #[test]
+    fn looks_by_name_and_old_card_back_index() {
+        let t = Themes::default();
+        let look = parse_look("card_front=IVORY\ncard_back=MIDNIGHT\nfelt=WINE\n", &t);
+        assert_eq!(look, Look { front: 2, back: 2, felt: 2 });
+        assert_eq!(parse_look("card_back=3\n", &t), Look { front: 0, back: 3, felt: 0 });
+        assert_eq!(parse_look("card_back=99\nfelt=GONE\n", &t), Look::default());
+        let look = Look { front: 1, back: 4, felt: 3 };
+        assert_eq!(parse_look(&look_text(&t, look), &t), look);
     }
 
     #[test]

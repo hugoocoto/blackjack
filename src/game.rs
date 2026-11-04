@@ -67,9 +67,17 @@ pub fn wide(i: usize) -> Rect {
 
 /// DEAL and SKIP sit where HIT and STAND are, so the mouse is already there
 /// when a hand ends.
+/// The strategy chart and theme picker toggles, left of the action area.
+pub const CHART_BUTTON: Rect = Rect { x: 66., y: 232., w: 22., h: 34. };
+pub const THEMES_BUTTON: Rect = Rect { x: 90., y: 232., w: 22., h: 34. };
+/// The theme picker, over the middle of the table: three rows on the left,
+/// a face and a back on the right.
+pub const THEMES_PANEL: Rect = Rect { x: 110., y: 64., w: 262., h: 120. };
 pub const NEXT_BUTTON: Rect = Rect { x: 114., y: 232., w: 178., h: 34. };
 /// The bet amount, between the stepper's arrows.
 pub const BET_PANEL: Rect = Rect { x: 330., y: 232., w: 110., h: 34. };
+/// How long after a win its streak badge pops (when the winnings land).
+pub const STREAK_POP: f32 = 0.45;
 pub const BETS: [i64; 13] = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
 
 /// Shuffle spots. L and R sit on each side of the insurance text, angled with
@@ -325,8 +333,10 @@ pub enum Action {
     Chart,
     BetDown,
     BetUp,
-    /// Next card back.
-    CardBack,
+    /// Show or hide the theme picker.
+    Themes,
+    /// Step the look of a picker row (see `theme::KINDS`) by one, back or on.
+    Theme(usize, i8),
     /// Esc / closing the window: show the records board, and leave from there.
     Leave,
     /// On the records board: keep playing, or save the initials.
@@ -363,7 +373,7 @@ pub struct Button {
     pub status: bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Input {
     pub mouse: Vec2,
     pub mouse_moved: bool,
@@ -374,6 +384,9 @@ pub struct Input {
     pub confirm: bool,
     pub left: bool,
     pub right: bool,
+    /// Left or right pressed this frame (no repeat while held).
+    pub left_tap: bool,
+    pub right_tap: bool,
     /// Typed characters, Enter and Backspace (for the initials on the records board).
     pub typed: Vec<char>,
     pub enter: bool,
@@ -443,12 +456,26 @@ pub struct Game {
     pub mood: f32,
     /// How far the strategy chart has slid in, 0..1.
     pub chart_in: f32,
-    /// Rounds won in a row (a push keeps it, a loss ends it), and how big the
-    /// fire at the betting spot is, 0..1; it grows and dies down smoothly.
+    /// Rounds won in a row (a push keeps it, a loss ends it), and lost in a
+    /// row (the other way round).
     pub streak: u32,
-    pub heat: f32,
-    /// Which of `render::BACKS` the cards wear.
-    pub card_back: usize,
+    pub cold: u32,
+    /// The run so far, from a long losing one (-1) to a long winning one (1);
+    /// it eases there, and lights the room (lamp, dust).
+    pub run: f32,
+    /// `time` when the streak last grew (it's celebrated from 2 in a row).
+    pub streak_at: f32,
+    /// Sounds to play a moment from now: (sound, `time` due).
+    sfx_later: Vec<(Sfx, f32)>,
+    /// How far the dust has drifted; it sinks, settles on a losing run and
+    /// rises on a winning one.
+    pub drift: f32,
+    /// The fronts, backs and felts there are, and which are in use.
+    pub themes: crate::theme::Themes,
+    pub look: crate::theme::Look,
+    /// The theme picker is open, and its row the arrow keys change.
+    pub show_themes: bool,
+    pub theme_row: usize,
     pub scores: crate::save::Scores,
     pub leaving: Option<Leaving>,
     /// The board changed and should be written out; the player chose to leave.
@@ -524,8 +551,15 @@ impl Game {
             mood: 0.,
             chart_in: 0.,
             streak: 0,
-            heat: 0.,
-            card_back: 0,
+            cold: 0,
+            run: 0.,
+            streak_at: 0.,
+            sfx_later: Vec::new(),
+            drift: 0.,
+            themes: Default::default(),
+            look: Default::default(),
+            show_themes: false,
+            theme_row: 0,
             scores: Default::default(),
             leaving: None,
             scores_changed: false,
@@ -717,7 +751,7 @@ impl Game {
     /// can play its press animation.
     fn press(&mut self, actions: &[Action]) {
         self.pressed.retain(|p| self.time - p.1 < 1.);
-        for b in self.buttons().into_iter().filter(|b| b.enabled && actions.contains(&b.action)) {
+        for b in self.buttons().into_iter().chain(self.theme_buttons()).filter(|b| b.enabled && actions.contains(&b.action)) {
             // Pressed again mid-press (a double click, the auto-player): let
             // the first press finish its animation.
             if self.pressed_at(b.action).is_some_and(|t| self.time - t < PRESS_DELAY) {
@@ -740,6 +774,38 @@ impl Game {
             }
         }
         held
+    }
+
+    /// Changes the look of picker row `kind` (see `theme::KINDS`) to the
+    /// previous or next one, wrapping round, and names it in the banner.
+    pub fn step_look(&mut self, kind: usize, step: i8) {
+        let n = self.themes.count(kind);
+        let i = match kind {
+            0 => &mut self.look.front,
+            1 => &mut self.look.back,
+            _ => &mut self.look.felt,
+        };
+        *i = (*i + n).wrapping_add_signed(step as isize) % n;
+        let name = self.themes.name(kind, *i);
+        self.banner = Some((format!("{}: {name}", crate::theme::KINDS[kind]), 1.2));
+        self.theme_row = kind;
+    }
+
+    /// The picker's arrows, when it's open: a back and an on button per row.
+    pub fn theme_buttons(&self) -> Vec<Button> {
+        if !self.show_themes || self.leaving.is_some() {
+            return Vec::new();
+        }
+        let grey = Color::from_rgba(90, 96, 120, 255);
+        let mut b = Vec::new();
+        for kind in 0..3 {
+            let y = THEMES_PANEL.y + 24. + kind as f32 * 26.;
+            for (x, label, step) in [(THEMES_PANEL.x + 52., "<", -1), (THEMES_PANEL.x + 142., ">", 1)] {
+                let rect = Rect::new(x, y, 18., 20.);
+                b.push(Button { rect, label, key: "", action: Action::Theme(kind, step), enabled: true, color: grey, status: false });
+            }
+        }
+        b
     }
 
     /// When a button with this action was last used, if recently.
@@ -805,7 +871,11 @@ impl Game {
         // A quiet label in place of a button, so the bar never has a gap.
         let status = |rect, label| Button { rect, label, key: "", action: Action::Deal, enabled: false, color: grey, status: true };
         let chart = if self.show_chart { Color::from_rgba(200, 150, 40, 255) } else { grey };
-        let mut b = vec![button(Rect::new(92., 236., 18., 24.), "?", "", Action::Chart, true, chart)];
+        let themes = if self.show_themes { Color::from_rgba(200, 150, 40, 255) } else { grey };
+        let mut b = vec![
+            button(CHART_BUTTON, "?", "", Action::Chart, true, chart),
+            button(THEMES_BUTTON, "T", "", Action::Themes, true, themes),
+        ];
         match self.phase {
             Phase::Round if self.insurance_offer => {
                 b.push(button(wide(0), "INSURE", "I", Action::Insure, true, Color::from_rgba(58, 123, 213, 255)));
@@ -873,9 +943,17 @@ impl Game {
         self.floaters.retain(|f| f.t < 1.6);
         self.shake = (self.shake - dt * 3.).max(0.);
         self.mood *= (-dt * 0.7).exp();
-        // Fire from 2 wins in a row, full size at 6.
-        let goal = (self.streak.saturating_sub(1) as f32 / 5.).min(1.);
-        self.heat += (goal - self.heat) * (1. - (-dt * 2.).exp());
+        // The run shows from 2 in a row; full at 6 wins or 4 losses. It eases
+        // in over a few seconds, but a losing run ended by a win warms fast.
+        let warm = (self.streak.saturating_sub(1) as f32 / 5.).min(1.);
+        let chill = (self.cold.saturating_sub(1) as f32 / 3.).min(1.);
+        let goal = warm - chill;
+        let rate = if goal > self.run && self.run < 0. { 2.5 } else { 0.8 };
+        self.run += (goal - self.run) * (1. - (-dt * rate).exp());
+        let now = self.time;
+        self.sfx.extend(self.sfx_later.iter().filter(|s| s.1 <= now).map(|s| s.0));
+        self.sfx_later.retain(|s| s.1 > now);
+        self.drift += dt * (1. - 1.6 * self.run.max(0.)) * (1. - 0.6 * (-self.run).max(0.));
         let goal = if self.show_chart { 1. } else { 0. };
         self.chart_in += (goal - self.chart_in).clamp(-dt * 4., dt * 4.);
         if let Some((_, t)) = &mut self.banner {
@@ -885,15 +963,30 @@ impl Game {
             }
         }
 
-        // Button clicks become actions.
+        // Button clicks become actions. While the theme picker is open, clicks
+        // belong to it: its arrows and its toggle work, and a click anywhere
+        // else closes it (and does nothing more).
         let mut actions = input.actions.clone();
+        let picking = self.show_themes && self.leaving.is_none();
         if input.click {
-            for b in self.buttons() {
-                if b.enabled && b.rect.contains(input.mouse) {
-                    actions.push(b.action);
-                }
+            let toggle = self.buttons().into_iter().filter(|b| b.action == Action::Themes);
+            let usable: Vec<Button> =
+                if picking { self.theme_buttons().into_iter().chain(toggle).collect() } else { self.buttons() };
+            let hit: Vec<Action> =
+                usable.iter().filter(|b| b.enabled && b.rect.contains(input.mouse)).map(|b| b.action).collect();
+            if picking && hit.is_empty() && !THEMES_PANEL.contains(input.mouse) {
+                self.show_themes = false;
             }
+            actions.extend(hit);
         }
+        let clickless;
+        let input = if picking {
+            let confirm = actions.contains(&Action::Deal);
+            clickless = Input { click: false, confirm, mouse_moved: false, ..input.clone() };
+            &clickless
+        } else {
+            input
+        };
         // Presses whose button goes away (see LATER) act a moment after they
         // happen, so the button can play its press first. Due ones now.
         let now = self.time;
@@ -928,9 +1021,32 @@ impl Game {
         if actions.contains(&Action::Chart) {
             self.show_chart = !self.show_chart;
         }
-        if actions.contains(&Action::CardBack) {
-            self.card_back = (self.card_back + 1) % crate::render::BACKS.len();
-            self.banner = Some((format!("CARD BACK: {}", crate::render::BACKS[self.card_back].name), 1.2));
+        if actions.contains(&Action::Themes) {
+            self.show_themes = !self.show_themes;
+        }
+        // While the picker is open, the arrow keys (and the wheel) work it
+        // instead of the bet and the cut.
+        let mut input = input;
+        let quiet_arrows;
+        if self.show_themes {
+            for a in &actions {
+                match a {
+                    Action::BetUp => self.theme_row = (self.theme_row + 2) % 3,
+                    Action::BetDown => self.theme_row = (self.theme_row + 1) % 3,
+                    _ => {}
+                }
+            }
+            actions.retain(|a| !matches!(a, Action::BetUp | Action::BetDown));
+            if input.left_tap || input.right_tap {
+                actions.push(Action::Theme(self.theme_row, if input.left_tap { -1 } else { 1 }));
+            }
+            quiet_arrows = Input { left: false, right: false, left_tap: false, right_tap: false, wheel: 0., ..input.clone() };
+            input = &quiet_arrows;
+        }
+        for a in &actions {
+            if let Action::Theme(kind, step) = *a {
+                self.step_look(kind, step);
+            }
         }
         // Space / Enter deal between rounds, decline insurance, and stand during
         // the player's turn.
@@ -942,9 +1058,9 @@ impl Game {
                 }
             }
         }
-        if input.wheel > 0. {
+        if input.wheel > 0. && !self.show_themes {
             actions.push(Action::BetUp);
-        } else if input.wheel < 0. {
+        } else if input.wheel < 0. && !self.show_themes {
             actions.push(Action::BetDown);
         }
         let waiting = self.wait_for_press(&actions);
@@ -1374,8 +1490,20 @@ impl Game {
         let round: i64 = self.hands.iter().filter_map(|h| h.outcome.map(|o| o.1)).sum();
         if round > 0 {
             self.streak += 1;
+            self.cold = 0;
+            if self.streak >= 2 {
+                // Its badge pops as the winnings land, to a ripple of chips
+                // that grows with the streak.
+                self.streak_at = self.time;
+                let pop = self.time + STREAK_POP;
+                self.sfx_later.push((Sfx::Win, pop));
+                for i in 0..(self.streak - 1).min(4) {
+                    self.sfx_later.push((Sfx::Chip, pop + 0.07 * (i + 1) as f32));
+                }
+            }
         } else if round < 0 {
             self.streak = 0;
+            self.cold += 1;
         }
         // The lamp warms after a win and cools a little after a loss.
         if any_new {
@@ -1525,6 +1653,46 @@ mod tests {
     }
 
     #[test]
+    fn the_theme_picker_takes_the_arrows() {
+        let mut g = Game::new();
+        g.update(0.05, &act(Action::Theme(1, 1)));
+        assert_eq!(g.look.back, 1);
+        assert_eq!(g.banner.as_ref().unwrap().0, "BACK: CRIMSON");
+        g.update(0.05, &act(Action::Themes));
+        assert!(g.show_themes);
+        // Changing the back put the picker on its row; down goes to the felt,
+        // and left steps that back, wrapping round to the last.
+        assert_eq!(g.theme_row, 1);
+        g.update(0.05, &act(Action::BetDown));
+        g.update(0.05, &Input { left: true, left_tap: true, ..idle() });
+        assert_eq!(g.look.felt, g.themes.felts.len() - 1);
+        // Holding the key repeats `left` but not `left_tap`: no more steps.
+        for _ in 0..10 {
+            g.update(0.05, &Input { left: true, ..idle() });
+        }
+        assert_eq!(g.look.felt, g.themes.felts.len() - 1);
+        // The bet didn't move, and closing gives the arrows back.
+        let bet = g.bet_idx;
+        g.update(0.05, &act(Action::Themes));
+        assert!(!g.show_themes);
+        assert_eq!(g.bet_idx, bet);
+        // Clicking an arrow works too.
+        g.update(0.05, &act(Action::Themes));
+        let next_front = g.theme_buttons()[1];
+        g.update(0.05, &Input { click: true, mouse: next_front.rect.center(), ..idle() });
+        assert_eq!(g.look.front, 1);
+        assert!(g.show_themes);
+        // A click outside closes it and does nothing else: here it would
+        // otherwise skip the shuffle.
+        assert_eq!(g.phase, Phase::Shuffle);
+        let t = g.t;
+        g.update(0.05, &Input { click: true, confirm: true, mouse: vec2(20., 20.), ..idle() });
+        assert!(!g.show_themes);
+        assert_eq!(g.phase, Phase::Shuffle);
+        assert!((g.t - t - 0.05).abs() < 1e-4);
+    }
+
+    #[test]
     fn opening_the_chart_keeps_the_turn() {
         let mut g = stacked(&[10, 10, 6, 7, 2]);
         start(&mut g);
@@ -1580,11 +1748,16 @@ mod tests {
         for _ in 0..100 {
             g.update(0.05, &idle());
         }
-        assert!(g.heat > 0.15);
+        assert!(g.run > 0.15);
+        assert!(g.streak_at > 0.);
         start(&mut g);
         g.update(0.05, &act(Action::Stand));
         settle_time(&mut g);
-        assert_eq!(g.streak, 0);
+        assert_eq!((g.streak, g.cold), (0, 1));
+        for _ in 0..100 {
+            g.update(0.05, &idle());
+        }
+        assert!(g.run.abs() < 0.01, "one loss after two wins is no run either way");
     }
 
     fn typed(s: &str, enter: bool) -> Input {

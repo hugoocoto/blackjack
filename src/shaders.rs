@@ -1,4 +1,4 @@
-//! The two shaders: a lamp that breathes slowly over the table (drawn with the
+//! The shaders: a lamp that breathes slowly over the table (drawn with the
 //! background, so it lights the felt but not the cards or the buttons), and
 //! the old-screen look over the whole game (drawn when the game image is
 //! scaled to the window).
@@ -18,11 +18,13 @@ pub fn warp(p: Vec2) -> Vec2 {
 }
 
 /// How much the lamp lights a point of the game (in pixels), 0..1, before the
-/// shader rounds it into steps. Same as `light` in `LAMP`.
-pub fn lamp_light(p: Vec2, time: f32) -> f32 {
-    let d = (p - vec2(240., 95.)) / vec2(250., 160.);
+/// shader rounds it into steps; `run` is `Game::run`. Same as `light` in
+/// `LAMP`, without the light on the betting spot.
+pub fn lamp_light(p: Vec2, time: f32, run: f32) -> f32 {
+    let (warm, cold) = (run.max(0.), (-run).max(0.));
+    let d = (p - vec2(240., 95.)) / (vec2(250., 160.) * (1. + 0.4 * warm - 0.35 * cold));
     let breathe = 0.5 + 0.5 * (time * std::f32::consts::TAU / 8.).sin();
-    (-d.dot(d) * 1.8).exp() * (0.55 + 0.45 * breathe)
+    (-d.dot(d) * 1.8).exp() * (0.55 + 0.45 * breathe) * (1. + 0.3 * warm - 0.45 * cold)
 }
 
 const VERTEX: &str = "#version 100
@@ -112,6 +114,8 @@ uniform sampler2D Texture;
 uniform vec2 src_size;
 uniform float time;
 uniform float mood;
+// A run of wins (up to 1) or of losses (down to -1); see Game::run.
+uniform float run;
 
 // Ordered dither: a fixed 4x4 pattern of thresholds.
 float bayer2(vec2 a) {
@@ -126,18 +130,26 @@ void main() {
     vec3 col = texture2D(Texture, uv).rgb;
     vec2 px = floor(uv * src_size);
 
-    // A lamp over the middle of the table that breathes, once every 8 s.
-    vec2 d = (px - vec2(240.0, 95.0)) / vec2(250.0, 160.0);
+    // A lamp over the middle of the table that breathes, once every 8 s. On
+    // a run of wins its light spreads and brightens, and on a long one a soft
+    // pool finds the betting spot; on a run of losses it closes in and dims.
+    float warm = max(run, 0.0);
+    float cold = max(-run, 0.0);
+    vec2 d = (px - vec2(240.0, 95.0)) / (vec2(250.0, 160.0) * (1.0 + 0.4 * warm - 0.35 * cold));
     float breathe = 0.5 + 0.5 * sin(time * 6.2831853 / 8.0);
-    float light = exp(-dot(d, d) * 1.8) * (0.55 + 0.45 * breathe);
+    float light = exp(-dot(d, d) * 1.8) * (0.55 + 0.45 * breathe) * (1.0 + 0.3 * warm - 0.45 * cold);
+    vec2 s = (px - vec2(240.0, 194.0)) / vec2(50.0, 22.0);
+    light += warm * warm * 0.6 * exp(-dot(s, s));
 
     // Light in a few steps, dithered, so it stays pixel art.
     light = floor(light * 8.0 + bayer4(px)) / 8.0;
 
-    col *= 0.8 + 0.3 * light;
+    col *= 0.8 - 0.35 * cold + 0.3 * light;
     col += vec3(0.04, 0.03, 0.0) * light;
     // Warmer and a touch brighter after a win, cooler after a loss.
     col += light * (max(mood, 0.0) * vec3(0.05, 0.025, -0.01) + max(-mood, 0.0) * vec3(-0.025, 0.0, 0.06));
+    // And over a run: golden while winning, blue in the shadows while losing.
+    col += light * warm * vec3(0.1, 0.055, -0.02) + cold * vec3(-0.03, -0.01, 0.06);
     gl_FragColor = vec4(col, 1.0);
 }
 ";
@@ -242,7 +254,15 @@ pub fn screen() -> Option<Material> {
 
 /// The breathing lamp; draw the background with it.
 pub fn lamp() -> Option<Material> {
-    load(LAMP, &[("src_size", UniformType::Float2), ("time", UniformType::Float1), ("mood", UniformType::Float1)])
+    load(
+        LAMP,
+        &[
+            ("src_size", UniformType::Float2),
+            ("time", UniformType::Float1),
+            ("mood", UniformType::Float1),
+            ("run", UniformType::Float1),
+        ],
+    )
 }
 
 #[cfg(test)]

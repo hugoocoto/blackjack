@@ -86,7 +86,9 @@ jobs:
 
   # The Android APK, built with cargo quad-apk in its Docker image (Android
   # SDK and NDK included). Its Rust is older than the game needs, so it's
-  # updated first. The APK is signed with a debug key: fine to install by hand.
+  # updated first, and so is cargo quad-apk: the image's copy reads Cargo.toml
+  # with cargo 0.62, which predates edition 2024. The APK is signed with a
+  # debug key: fine to install by hand.
   android:
     runs-on: ubuntu-latest
     container: notfl3/cargo-apk
@@ -98,6 +100,10 @@ jobs:
           rustup update stable
           rustup default stable
           rustup target add armv7-linux-androideabi aarch64-linux-android x86_64-linux-android
+
+      # Not on crates.io yet (0.1.4 there is from 2022); this commit uses cargo 0.87.
+      - name: Update cargo quad-apk
+        run: cargo install --force --locked --git https://github.com/not-fl3/cargo-quad-apk --rev d411c8fe1c08339e46d7dc6b40ac04ea5e3a01b6 cargo-quad-apk
 
       - name: Build
         run: |

@@ -16,6 +16,30 @@
        was built with (see .github/workflows/pages.yml). -->
   <script src="gl.js"></script>
   <script src="audio.js"></script>
-  <script>load("hushjack.wasm");</script>
+  <script>
+    // Where the game keeps its records and card back (see src/save.rs). The
+    // storage can be missing or blocked; then nothing is kept.
+    miniquad_add_plugin({
+      register_plugin: function (importObject) {
+        const bytes = (ptr, len) => new Uint8Array(wasm_memory.buffer, ptr, len);
+        const text = (ptr, len) => new TextDecoder().decode(bytes(ptr, len));
+        const get = (key) => {
+          try { return localStorage.getItem("hushjack/" + key); } catch (e) { return null; }
+        };
+        importObject.env.hj_storage_len = function (key, key_len) {
+          const value = get(text(key, key_len));
+          return value === null ? -1 : new TextEncoder().encode(value).length;
+        };
+        importObject.env.hj_storage_read = function (key, key_len, buf) {
+          const value = new TextEncoder().encode(get(text(key, key_len)) || "");
+          bytes(buf, value.length).set(value);
+        };
+        importObject.env.hj_storage_write = function (key, key_len, value, value_len) {
+          try { localStorage.setItem("hushjack/" + text(key, key_len), text(value, value_len)); } catch (e) {}
+        };
+      },
+    });
+    load("hushjack.wasm");
+  </script>
 </body>
 </html>

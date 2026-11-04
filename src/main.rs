@@ -8,6 +8,7 @@ mod render;
 mod save;
 mod shaders;
 mod strategy;
+mod theme;
 
 use game::{Action, Game, Input, Sfx, H, W};
 use macroquad::audio::{load_sound_from_bytes, play_sound, PlaySoundParams, Sound};
@@ -30,7 +31,9 @@ fn conf() -> Conf {
         window_width,
         window_height,
         window_resizable: true,
-        high_dpi: false,
+        // In the browser, draw at the screen's real pixels: otherwise on a
+        // scaled display the browser stretches the canvas and blurs it.
+        high_dpi: cfg!(target_arch = "wasm32"),
         sample_count: 1,
         // Taskbar / Dock icon on Windows and macOS (miniquad's logo otherwise).
         icon: Some(miniquad::conf::Icon {
@@ -121,20 +124,28 @@ async fn main() {
     // A seed fixes the whole shoe (see --seed); otherwise every game is new.
     rand::srand(desktop::seed().unwrap_or((miniquad::date::now() * 1e6) as u64));
 
-    // The card sheet, repainted with the chosen back (and again when it changes).
+    // The card sheet, repainted with the chosen front and back (and again
+    // when they change).
     let sheet = Image::from_file_with_format(include_bytes!("../assets/cards.png"), None).expect("cards.png");
-    let cards_with_back = |back: usize| {
+    let themes = save::load_themes();
+    let mut look = save::load_look(&themes);
+    let paint_cards = |look: theme::Look| {
         let mut s = sheet.clone();
-        render::paint_card_back(&mut s, back);
+        render::paint_fronts(&mut s, &themes.fronts[look.front]);
+        render::paint_card_back(&mut s, &themes.backs[look.back]);
         let t = Texture2D::from_image(&s);
         t.set_filter(FilterMode::Nearest);
         t
     };
-    let mut back = save::load_card_back() % render::BACKS.len();
+    let print = |look: theme::Look| {
+        let [r, g, b] = themes.felts[look.felt].print;
+        Color::from_rgba(r, g, b, 191)
+    };
     let font = render::Glyphs::new(include_bytes!("../assets/font.ttf"));
     let mut assets = render::Assets {
-        cards: cards_with_back(back),
-        bg: render::make_background(),
+        cards: paint_cards(look),
+        bg: render::make_background(&themes.felts[look.felt]),
+        felt_print: print(look),
         font,
         lamp: shaders::lamp(),
         shade: shaders::shade(),
@@ -152,7 +163,8 @@ async fn main() {
 
     // Test hooks: BJ_AUTO=1 plays by itself, BJ_SPEED=n fast-forwards,
     // BJ_STACK=r,r,.. stacks the first ranks,
-    // BJ_WATCH=1 lets it watch the shuffle, BJ_CHART=1 opens the strategy chart, BJ_MUTE=1 disables sound,
+    // BJ_WATCH=1 lets it watch the shuffle, BJ_CHART=1 opens the strategy chart, BJ_THEMES=1 the theme picker,
+    // BJ_RUN=n starts n wins in a row (-n: losses), BJ_MUTE=1 disables sound,
     // BJ_SHOTS=f1,f2,.. saves the frame (the 480x270 game, not the window) into
     // BJ_SHOT_DIR and quits after the last; frames then step a fixed 1/60 s, so a
     // recording doesn't depend on the monitor or on how slow saving is.
@@ -169,10 +181,17 @@ async fn main() {
     let leave_at: Option<u64> = std::env::var("BJ_LEAVE_AT").ok().and_then(|s| s.parse().ok());
 
     let mut game = Game::new();
-    game.card_back = back;
+    game.themes = themes.clone();
+    game.look = look;
     game.scores = save::Scores::load();
     prevent_quit();
     game.show_chart = std::env::var("BJ_CHART").is_ok();
+    game.show_themes = std::env::var("BJ_THEMES").is_ok();
+    match std::env::var("BJ_RUN").ok().and_then(|s| s.parse::<i32>().ok()) {
+        Some(n) if n > 0 => game.streak = n as u32,
+        Some(n) => game.cold = n.unsigned_abs(),
+        None => {}
+    }
     // Applied once the shoe is loaded, after the cut and the burn card.
     let mut stack: Option<Vec<u8>> =
         std::env::var("BJ_STACK").ok().map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect());
@@ -214,7 +233,8 @@ async fn main() {
             (KeyCode::I, Action::Insure),
             (KeyCode::N, Action::NoInsure),
             (KeyCode::C, Action::Chart),
-            (KeyCode::B, Action::CardBack),
+            (KeyCode::B, Action::Theme(1, 1)),
+            (KeyCode::T, Action::Themes),
             (KeyCode::Space, Action::Deal),
             (KeyCode::Enter, Action::Deal),
             (KeyCode::KpEnter, Action::Deal),
@@ -241,9 +261,7 @@ async fn main() {
             }
         }
         // Closing the window shows the records board first, like Esc.
-        // (Not on the web: there's no window to close and nowhere to keep records.)
-        let esc = !cfg!(target_arch = "wasm32") && is_key_pressed(KeyCode::Escape);
-        if esc || is_quit_requested() || leave_at == Some(frame) {
+        if is_key_pressed(KeyCode::Escape) || is_quit_requested() || leave_at == Some(frame) {
             actions.push(Action::Leave);
         }
         let mut auto_confirm = false;
@@ -263,6 +281,8 @@ async fn main() {
             confirm,
             left,
             right,
+            left_tap: is_key_pressed(KeyCode::Left),
+            right_tap: is_key_pressed(KeyCode::Right),
             typed,
             enter: is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter),
             backspace: is_key_pressed(KeyCode::Backspace),
@@ -282,13 +302,27 @@ async fn main() {
             game.scores_changed = false;
             game.scores.save();
         }
-        if game.quit {
+        // A browser tab can't be closed from the page, so leaving there sits
+        // down at a fresh table instead (same looks and records).
+        if game.quit && cfg!(target_arch = "wasm32") {
+            let scores = std::mem::take(&mut game.scores);
+            game = Game::new();
+            game.themes = themes.clone();
+            game.look = look;
+            game.scores = scores;
+        } else if game.quit {
             break;
         }
-        if game.card_back != back {
-            back = game.card_back;
-            assets.cards = cards_with_back(back);
-            save::save_card_back(back);
+        if game.look != look {
+            if game.look.front != look.front || game.look.back != look.back {
+                assets.cards = paint_cards(game.look);
+            }
+            if game.look.felt != look.felt {
+                assets.bg = render::make_background(&themes.felts[game.look.felt]);
+                assets.felt_print = print(game.look);
+            }
+            look = game.look;
+            save::save_look(&themes, look);
         }
 
         for s in game.sfx.drain(..) {

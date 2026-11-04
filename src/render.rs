@@ -1,5 +1,6 @@
 use crate::cards::Card;
 use crate::game::*;
+use crate::theme::*;
 use macroquad::prelude::*;
 use std::f32::consts::PI;
 
@@ -12,6 +13,8 @@ pub struct Assets {
     /// Shadows that don't stack, and the cards they fall on (see shaders.rs).
     pub shade: Option<Material>,
     pub cover: Option<Material>,
+    /// The words printed on the felt.
+    pub felt_print: Color,
 }
 
 struct Glyph {
@@ -84,7 +87,6 @@ const GOLD: Color = Color::new(0.95, 0.76, 0.3, 1.);
 const RED_T: Color = Color::new(0.93, 0.35, 0.35, 1.);
 const CUT_YELLOW: Color = Color::new(0.98, 0.82, 0.2, 1.);
 const CUT_DARK: Color = Color::new(0.6, 0.42, 0.08, 1.);
-const FELT_TEXT: Color = Color::new(0.45, 0.72, 0.58, 0.75);
 const PILL_BG: Color = Color::new(0.09, 0.09, 0.13, 0.9);
 const EDGE_A: Color = Color::new(0.91, 0.89, 0.85, 1.);
 const EDGE_B: Color = Color::new(0.77, 0.78, 0.82, 1.);
@@ -118,6 +120,8 @@ fn progress(now: f32, at: f32, delay: f32, dur: f32) -> f32 {
 const HOUSE: Vec2 = vec2(240., -30.);
 /// Where new bets come from: the credits, bottom left.
 const PURSE: Vec2 = vec2(40., 272.);
+/// Where the streak badge sits: right of the betting spot (baseline).
+const STREAK_POS: Vec2 = vec2(274., 204.);
 
 // The strategy chart is printed on card stock.
 const PAPER: Color = Color::new(0.95, 0.92, 0.84, 1.);
@@ -158,7 +162,7 @@ impl Assets {
         let y = y.round();
         let shadow = Color::new(0., 0., 0., 0.55 * color.a);
         // Felt and paper print get no drop shadow.
-        let flat = color == FELT_TEXT || color == INK || color == INK_SOFT || color == INK_MARK;
+        let flat = color == self.felt_print || color == INK || color == INK_SOFT || color == INK_MARK;
         let passes: &[(f32, Color)] = if flat { &[(0., color)] } else { &[(k, shadow), (0., color)] };
         for &(dy, c) in passes {
             let mut cx = x0;
@@ -379,7 +383,7 @@ impl Assets {
         draw_rectangle(p.x, p.y, CW + 6., CH + 6., Color::new(0., 0., 0., 0.18));
         self.pile(DISCARD_POS, g.discard);
         if g.discard == 0 {
-            self.text("DISCARD", DISCARD_POS.x + CW / 2., DISCARD_POS.y + 34., SMALL, FELT_TEXT, 0.5);
+            self.text("DISCARD", DISCARD_POS.x + CW / 2., DISCARD_POS.y + 34., SMALL, self.felt_print, 0.5);
         }
     }
 
@@ -394,7 +398,7 @@ impl Assets {
             let y = (TABLE_CY + b * (1. - dx * dx).max(0.).sqrt() + drop).round();
             if g.src.w > 0. {
                 let p = DrawTextureParams { source: Some(g.src), ..Default::default() };
-                draw_texture_ex(&self.font.tex, x + g.off.x, y + g.off.y, FELT_TEXT, p);
+                draw_texture_ex(&self.font.tex, x + g.off.x, y + g.off.y, self.felt_print, p);
             }
             x += g.advance;
         }
@@ -411,11 +415,11 @@ impl Assets {
         for (dy, row) in spade.iter().enumerate() {
             for (dx, c) in row.chars().enumerate() {
                 if c == 'S' {
-                    draw_rectangle(W / 2. - 3. + dx as f32, 128. + dy as f32, 1., 1., FELT_TEXT);
+                    draw_rectangle(W / 2. - 3. + dx as f32, 128. + dy as f32, 1., 1., self.felt_print);
                 }
             }
         }
-        self.text("HUSHJACK", W / 2., 150., SMALL, FELT_TEXT, 0.5);
+        self.text("HUSHJACK", W / 2., 150., SMALL, self.felt_print, 0.5);
     }
 
     fn riffle_flyers(&self, from: [(Vec2, usize); 2], to: (Vec2, usize), v: f32) {
@@ -811,13 +815,7 @@ impl Assets {
                 draw_rectangle_lines(cx - 2., ry - 2., cw + 3., rh + 3., 2., Color::new(INK.r, INK.g, INK.b, a));
             }
         };
-        // Card stock with a darker edge and clipped corners.
-        let panel = |r: Rect| {
-            self.with(&self.shade, || draw_rectangle(r.x + 2., r.y + 3., r.w, r.h, SHADOW));
-            draw_rectangle(r.x + 1., r.y, r.w - 2., r.h, PAPER_EDGE);
-            draw_rectangle(r.x, r.y + 1., r.w, r.h - 2., PAPER_EDGE);
-            draw_rectangle(r.x + 1., r.y + 1., r.w - 2., r.h - 2., PAPER);
-        };
+        let panel = |r: Rect| self.paper(r);
         let left = -slide;
         panel(Rect::new(2. + left, 80., 120., 130.));
         table(6. + left, 83., "HARD", Table::Hard, &HARD);
@@ -836,6 +834,41 @@ impl Assets {
         table(362. + right, 61. + rh * 9. + 4., "PAIR", Table::Pairs, &PAIRS);
     }
 
+    /// Card stock with a darker edge and clipped corners.
+    fn paper(&self, r: Rect) {
+        self.with(&self.shade, || draw_rectangle(r.x + 2., r.y + 3., r.w, r.h, SHADOW));
+        draw_rectangle(r.x + 1., r.y, r.w - 2., r.h, PAPER_EDGE);
+        draw_rectangle(r.x, r.y + 1., r.w, r.h - 2., PAPER_EDGE);
+        draw_rectangle(r.x + 1., r.y + 1., r.w - 2., r.h - 2., PAPER);
+    }
+
+    /// The theme picker: a row per kind of look with its arrows, and a face
+    /// and a back wearing the chosen ones. The table behind shows the felt.
+    fn themes(&self, g: &Game, mouse: Vec2) {
+        let buttons = g.theme_buttons();
+        if buttons.is_empty() {
+            return;
+        }
+        let r = THEMES_PANEL;
+        self.paper(r);
+        self.text("THEMES", r.x + 10., r.y + 15., SMALL, INK, 0.);
+        let chosen = [g.look.front, g.look.back, g.look.felt];
+        for (kind, label) in crate::theme::KINDS.iter().enumerate() {
+            let y = r.y + 24. + kind as f32 * 26.;
+            let c = if kind == g.theme_row { INK_MARK } else { INK_SOFT };
+            self.text(label, r.x + 10., y + 13., SMALL, c, 0.);
+            self.text(g.themes.name(kind, chosen[kind]), r.x + 106., y + 13., SMALL, INK, 0.5);
+        }
+        for b in &buttons {
+            self.button(g, b, b.rect.contains(mouse), 1.);
+        }
+        for (i, card) in [Some(Card { rank: 1, suit: 1 }), None].into_iter().enumerate() {
+            let p = DrawTextureParams { source: Some(Self::card_src(card)), ..Default::default() };
+            draw_texture_ex(&self.cards, r.x + 170. + i as f32 * 46., r.y + 22., WHITE, p);
+        }
+        self.text("ARROWS TO CHANGE - CLICK OUTSIDE TO CLOSE", r.x + r.w / 2., r.y + r.h - 6., SMALL, INK_SOFT, 0.5);
+    }
+
     fn hud(&self, g: &Game, mouse: Vec2) {
         // The bar sits straight on the floor under the table: no panel, no separator.
         self.text("CREDITS", 8., HUD_Y + 13., SMALL, MUTED, 0.);
@@ -846,7 +879,13 @@ impl Assets {
             g.shown_credits.round() as i64
         };
         let col = if shown < 0 { RED_T } else { WHITE_T };
-        self.text(&fmt_halves(shown), 8., HUD_Y + 36., BIG, col, 0.);
+        // Small when big would run into the buttons beside it.
+        let s = fmt_halves(shown);
+        if self.text_width(&s, BIG) <= CHART_BUTTON.x - 10. {
+            self.text(&s, 8., HUD_Y + 36., BIG, col, 0.);
+        } else {
+            self.text(&s, 8., HUD_Y + 32., SMALL, col, 0.);
+        }
 
 
         for f in g.floaters.iter().filter(|_| g.leaving.is_none()) {
@@ -859,7 +898,7 @@ impl Assets {
         let fade = 0.35 + 0.65 * ease(progress(g.time, g.bar_at, 0., 0.2));
         let alpha = |c: Color, a: f32| Color::new(c.r, c.g, c.b, c.a * a);
         for b in g.buttons() {
-            let a = if b.label == "?" { 1. } else { fade };
+            let a = if matches!(b.action, Action::Chart | Action::Themes) { 1. } else { fade };
             let r = b.rect;
             if b.status {
                 // A recessed, quiet label.
@@ -920,54 +959,61 @@ impl Assets {
         let Some((s, t)) = &g.banner else { return };
         let a = t.clamp(0., 0.3) / 0.3;
         let gold = Color::new(GOLD.r, GOLD.g, GOLD.b, a);
-        draw_rectangle(0., 78., W, 28., Color::new(0.05, 0.04, 0.08, 0.8 * a));
-        draw_rectangle(0., 78., W, 1., gold);
-        draw_rectangle(0., 105., W, 1., gold);
+        // Under the theme picker while it's open, so it doesn't cover it.
+        let top = if g.show_themes { THEMES_PANEL.y + THEMES_PANEL.h + 4. } else { 78. };
+        draw_rectangle(0., top, W, 28., Color::new(0.05, 0.04, 0.08, 0.8 * a));
+        draw_rectangle(0., top, W, 1., gold);
+        draw_rectangle(0., top + 27., W, 1., gold);
         // The letters ride a soft wave.
         let mut x = (W / 2. - self.text_width(s, BIG) / 2.).round();
         for (i, ch) in s.chars().enumerate() {
             let ch = ch.to_string();
             let dy = ((g.time * 5. - i as f32 * 0.55).sin() * 1.5).round();
-            self.text(&ch, x, 98. + dy, BIG, gold, 0.);
+            self.text(&ch, x, top + 20. + dy, BIG, gold, 0.);
             x += self.text_width(&ch, BIG);
         }
     }
 
-    /// Soft pixel flames along the back of the betting spot, as big as the
-    /// winning streak (`heat`): yellow at the base, red and faint at the tips,
-    /// each column flickering on its own, with a warm glow and a few embers.
-    fn fire(&self, g: &Game) {
-        if g.heat < 0.02 {
+    /// A winning streak's badge, right of the betting spot. When the
+    /// winnings land, "3 IN A ROW!" pops in letter by letter and rides a wave,
+    /// in colours that climb with the streak, with a burst of sparks, then
+    /// fades.
+    fn streak(&self, g: &Game) {
+        let (x, y) = (STREAK_POS.x, STREAK_POS.y);
+        let since = g.time - g.streak_at - STREAK_POP;
+        let n = g.streak;
+        let fade = 1. - ((since - 1.4) / 0.25).clamp(0., 1.);
+        if n < 2 || since < 0. || fade <= 0. {
             return;
         }
-        let (cx, cy, a, b) = (W / 2., 194., 26., 10.);
-        let t = g.time;
-        draw_ellipse(cx, cy, a + 6., b + 4., 0., Color::new(1., 0.5, 0.15, 0.12 * g.heat));
-        let mut x = -a + 3.;
-        while x <= a - 3. {
-            let base = cy - b * (1. - (x / a).powi(2)).sqrt();
-            let flicker = 0.6 + 0.4 * ((t * 9. + x * 1.7).sin() * (t * 5.3 + x * 0.6).sin()).abs();
-            let taper = (1. - (x / a).powi(2)).sqrt();
-            let h = (g.heat * 16. * flicker * (0.35 + 0.65 * taper)).round();
-            for k in 0..h as i32 {
-                let f = k as f32 / h;
-                let c = if f < 0.3 {
-                    Color::new(1., 0.88, 0.4, 0.9)
-                } else if f < 0.65 {
-                    Color::new(1., 0.55, 0.15, 0.85)
-                } else {
-                    Color::new(0.85, 0.22, 0.12, 0.7 * (1. - f) / 0.35)
-                };
-                draw_rectangle(cx + x - 1., base - k as f32, 2., 1., c);
-            }
-            x += 2.;
+        let alpha = |c: Color, a: f32| Color::new(c.r, c.g, c.b, c.a * a);
+        // Gold, then gold catching white, then shimmering gold, amber and white.
+        let tier = |i: usize| match n {
+            0..=3 => GOLD,
+            4..=5 => if (g.time * 3. - i as f32 * 0.4).sin() > 0.7 { WHITE_T } else { GOLD },
+            _ => [GOLD, Color::new(1., 0.62, 0.22, 1.), WHITE_T][(g.time * 10. + i as f32 * 0.7) as usize % 3],
+        };
+        let s = format!("{n} IN A ROW!");
+        let mut cx = x;
+        for (i, ch) in s.chars().enumerate() {
+            let ch = ch.to_string();
+            // Each letter drops in a moment after the one before, then waves.
+            let p = ease_out_back(((since - i as f32 * 0.03) / 0.25).clamp(0., 1.));
+            let dy = (-8. * (1. - p) + (g.time * 6. - i as f32 * 0.6).sin() * 1.5).round();
+            self.text(&ch, cx, y + dy, BIG, alpha(tier(i), p.min(1.) * fade), 0.);
+            cx += self.text_width(&ch, BIG);
         }
-        for i in 0..(g.heat * 6.) as i32 {
-            let f = i as f32;
-            let life = (t * (0.6 + 0.1 * f) + f * 0.37).fract();
-            let ex = cx + ((f * 12.9898).sin() * 43758.547).rem_euclid(1.) * 40. - 20. + (t * 2. + f).sin() * 2.;
-            let ey = cy - b - 4. - life * (10. + g.heat * 16.);
-            draw_rectangle(ex.round(), ey.round(), 1., 1., Color::new(1., 0.7, 0.3, 0.8 * (1. - life)));
+        // Sparks fly out of it and fall; more, the longer the streak.
+        if since < 0.9 {
+            let mid = vec2(x + self.text_width(&s, BIG) / 2., y - 6.);
+            for i in 0..4 + 3 * n.min(8) {
+                let f = i as f32;
+                let r = |k: f32| ((f * 12.9898 + k * 78.233).sin() * 43758.547).rem_euclid(1.);
+                let v = vec2(r(1.) - 0.5, -r(2.) * 0.8 - 0.2) * vec2(160., 110.);
+                let p = mid + v * since + vec2(0., 160. * since * since);
+                let c = if r(3.) > 0.5 { GOLD } else { WHITE_T };
+                draw_rectangle(p.x.round(), p.y.round(), 1., 1., alpha(c, 1. - since / 0.9));
+            }
         }
     }
 
@@ -1028,19 +1074,30 @@ impl Assets {
     }
 
     /// A few specks of dust drifting through the lamp light; each shows only as
-    /// much as the lamp lights it, and twinkles slowly.
+    /// much as the lamp lights it, and twinkles slowly. On a run of wins more
+    /// of them, golden, rise through the light; on a run of losses they settle,
+    /// slow and cool.
     fn dust(&self, g: &Game) {
-        for i in 0..22 {
+        let (warm, cold) = (g.run.max(0.), (-g.run).max(0.));
+        let gold = Color::new(1., 0.82, 0.45, 1.);
+        let pale = Color::new(1., 0.95, 0.82, 1.);
+        let blue = Color::new(0.8, 0.86, 1., 1.);
+        let tint = |c: Color, k: f32| Color::new(pale.r + (c.r - pale.r) * k, pale.g + (c.g - pale.g) * k, pale.b + (c.b - pale.b) * k, 1.);
+        let color = if warm > 0. { tint(gold, warm) } else { tint(blue, cold) };
+        let extra = warm * 16.;
+        for i in 0..22 + extra.ceil() as i32 {
             let f = i as f32;
             let r = |k: f32| ((f * 12.9898 + k * 78.233).sin() * 43758.547).rem_euclid(1.);
-            // Sinks very slowly and sways; wraps around the lit area.
+            // Drifts (see Game::drift) and sways; wraps around the lit area.
             let x = 40. + r(1.) * 400. + (g.time * (0.2 + 0.3 * r(2.)) + f).sin() * 8.;
-            let y = 10. + (r(3.) * 190. + g.time * (1.5 + 2.5 * r(4.))).rem_euclid(190.);
-            let light = crate::shaders::lamp_light(vec2(x, y), g.time);
+            let y = 10. + (r(3.) * 190. + g.drift * (1.5 + 2.5 * r(4.))).rem_euclid(190.);
+            let light = crate::shaders::lamp_light(vec2(x, y), g.time, g.run);
             let twinkle = 0.5 + 0.5 * (g.time * (0.5 + r(5.)) + f * 1.7).sin();
-            let a = light * twinkle * 0.55;
+            // The extra motes fade in as the run grows.
+            let fade = (extra - (f - 22.)).clamp(0., 1.);
+            let a = light * twinkle * (0.55 + 0.25 * warm - 0.2 * cold) * fade;
             if a > 0.03 {
-                draw_rectangle(x.round(), y.round(), 1., 1., Color::new(1., 0.95, 0.82, a));
+                draw_rectangle(x.round(), y.round(), 1., 1., Color::new(color.r, color.g, color.b, a));
             }
         }
     }
@@ -1050,6 +1107,7 @@ impl Assets {
             lamp.set_uniform("src_size", vec2(W, H));
             lamp.set_uniform("time", g.time);
             lamp.set_uniform("mood", g.mood);
+            lamp.set_uniform("run", g.run);
             gl_use_material(lamp);
         }
         draw_texture(&self.bg, 0., 0., WHITE);
@@ -1057,7 +1115,6 @@ impl Assets {
         self.table_text();
         self.discard(g);
         self.insurance(g);
-        self.fire(g);
         // Dealt cards are drawn under the shoe, so they slide out of its mouth.
         self.hands(g);
         match g.phase {
@@ -1075,38 +1132,49 @@ impl Assets {
             self.text("CUT", g.cut_card_pos.x + 13., g.cut_card_pos.y + 21., SMALL, CUT_DARK, 0.5);
         }
         self.dust(g);
+        self.streak(g);
         self.chart(g);
+        self.themes(g, mouse);
         self.records(g);
         self.hud(g, mouse);
         self.banner(g);
     }
 }
 
-/// A card back: its fill, the woven pattern over it, the frame and mark
-/// colour, and the suit in the middle (None: the sheet's own back).
-pub struct Back {
-    pub name: &'static str,
-    fill: [u8; 3],
-    weave: [u8; 3],
-    accent: [u8; 3],
-    suit: Option<char>,
+/// Recolours the faces in the sheet as `front`: the paper, the trim, and each
+/// suit's ink. The outline round each card stays.
+pub fn paint_fronts(sheet: &mut Image, front: &Front) {
+    let width = sheet.width as usize;
+    for suit in 0..4u8 {
+        for rank in 1..=13 {
+            let src = Assets::card_src(Some(Card { rank, suit }));
+            let (x0, y0, w, h) = (src.x as usize, src.y as usize, src.w as usize, src.h as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = ((y0 + y) * width + x0 + x) * 4;
+                    let edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+                    let new = match [sheet.bytes[i], sheet.bytes[i + 1], sheet.bytes[i + 2]] {
+                        SHEET_PAPER => front.paper,
+                        SHEET_TRIM => front.trim,
+                        // Red on the black suits is court card trim: the hearts ink.
+                        SHEET_RED if suit < 2 => front.inks[suit as usize],
+                        SHEET_RED => front.inks[0],
+                        SHEET_SLATE if suit >= 2 && !edge => front.inks[suit as usize],
+                        _ => continue,
+                    };
+                    sheet.bytes[i..i + 3].copy_from_slice(&new);
+                }
+            }
+        }
+    }
 }
 
-/// The card backs to choose from (`B` cycles them).
-pub const BACKS: [Back; 5] = [
-    Back { name: "PLUM", fill: [70, 42, 92], weave: [84, 54, 108], accent: [222, 178, 92], suit: Some('S') },
-    Back { name: "CRIMSON", fill: [118, 28, 40], weave: [136, 40, 52], accent: [236, 214, 170], suit: Some('H') },
-    Back { name: "MIDNIGHT", fill: [28, 38, 78], weave: [38, 52, 100], accent: [196, 208, 228], suit: Some('D') },
-    Back { name: "CHARCOAL", fill: [36, 34, 42], weave: [48, 46, 56], accent: [222, 178, 92], suit: Some('C') },
-    Back { name: "CLASSIC", fill: [0; 3], weave: [0; 3], accent: [0; 3], suit: None },
-];
-
 /// Repaints the card back in the sheet (the one at `card_src(None)`) as
-/// `BACKS[i]`: the fill with a faint woven pattern, the frame in the accent
+/// `back`: the fill with a faint woven pattern, the frame in the accent
 /// colour, and a suit in the middle. The white edge and the outline stay, and
 /// no face is touched.
-pub fn paint_card_back(sheet: &mut Image, i: usize) {
-    let Back { fill, weave, accent, suit, .. } = BACKS[i % BACKS.len()];
+pub fn paint_card_back(sheet: &mut Image, back: &Back) {
+    let &Back { fill, weave, accent, suit, .. } = back;
     let Some(suit) = suit else { return };
     let src = Assets::card_src(None);
     let (x0, y0) = (src.x as u32, src.y as u32);
@@ -1161,7 +1229,7 @@ fn value_label(v: crate::cards::Value, done: bool) -> String {
 
 /// Semicircular table (flat dealer side on top, padded rail round the player
 /// side) on a dark floor, with the printed lines. Generated once at startup.
-pub fn make_background() -> Texture2D {
+pub fn make_background(felt: &Felt) -> Texture2D {
     let (w, h) = (W as u16, H as u16);
     let mut img = Image::gen_image_color(w, h, BLACK);
     let bayer = [[0., 8., 2., 10.], [12., 4., 14., 6.], [3., 11., 1., 9.], [15., 7., 13., 5.]];
@@ -1182,12 +1250,14 @@ pub fn make_background() -> Texture2D {
                     let ddy = (y as f32 - 100.) / 150.;
                     let d = (ddx * ddx * 0.6 + ddy * ddy).sqrt();
                     let band = ((d * 3. + th * 0.9) as i32).clamp(0, 4);
-                    let base: [[u8; 3]; 5] = [[38, 110, 80], [34, 100, 73], [30, 90, 66], [26, 79, 58], [22, 68, 50]];
-                    let mut c = base[band as usize];
+                    // Each band a tenth darker than the one inside it.
+                    let k = 1. - 0.095 * band as f32;
+                    let c = felt.cloth.map(|v| (v as f32 * k).round() as u8);
                     if (x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)) % 23 == 0 {
-                        c = [c[0] + 4, c[1] + 8, c[2] + 6];
+                        c.map(|v| v.saturating_add(v / 12 + 2))
+                    } else {
+                        c
                     }
-                    c
                 }
             } else if v <= 1. {
                 // Padded leather rail, lit from above.
@@ -1209,7 +1279,7 @@ pub fn make_background() -> Texture2D {
             img.set_pixel(x as u32, y as u32, Color::from_rgba(c[0], c[1], c[2], 255));
         }
     }
-    let line = Color::from_rgba(72, 142, 108, 255);
+    let line = Color::from_rgba(felt.line[0], felt.line[1], felt.line[2], 255);
     let mut ellipse = |ecx: f32, ecy: f32, ea: f32, eb: f32, from: f32, to: f32| {
         for i in 0..3000 {
             let t = from + (to - from) * i as f32 / 3000.;
