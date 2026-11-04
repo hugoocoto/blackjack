@@ -1,0 +1,4 @@
+# The web build: macroquad's browser functions (audio, GL) come from its
+# JavaScript loaders at runtime, so the linker must leave them unresolved.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--allow-undefined"]

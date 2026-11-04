@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hushjack</title>
+  <link rel="icon" href="hushjack.png">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0a080e; }
+    canvas { display: block; width: 100%; height: 100%; outline: none; }
+  </style>
+</head>
+<body>
+  <canvas id="glcanvas" tabindex="1"></canvas>
+  <!-- gl.js and audio.js come from the miniquad and quad-snd crates the game
+       was built with (see .github/workflows/pages.yml). -->
+  <script src="gl.js"></script>
+  <script src="audio.js"></script>
+  <script>load("hushjack.wasm");</script>
+</body>
+</html>

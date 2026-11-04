@@ -55,6 +55,21 @@ pub const CA_RETURN: f32 = 3.0;
 
 const DEAL_WAIT: f32 = 0.22;
 const START_CREDITS: i64 = 1000;
+/// The bottom bar's action area, right of the credits: four slots, or two
+/// wide ones, always filled with what can be done right now.
+pub fn slot(i: usize) -> Rect {
+    Rect::new(114. + i as f32 * 91., 232., 87., 34.)
+}
+
+pub fn wide(i: usize) -> Rect {
+    Rect::new(114. + i as f32 * 182., 232., 178., 34.)
+}
+
+/// DEAL and SKIP sit where HIT and STAND are, so the mouse is already there
+/// when a hand ends.
+pub const NEXT_BUTTON: Rect = Rect { x: 114., y: 232., w: 178., h: 34. };
+/// The bet amount, between the stepper's arrows.
+pub const BET_PANEL: Rect = Rect { x: 330., y: 232., w: 110., h: 34. };
 pub const BETS: [i64; 13] = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
 
 /// Shuffle spots. L and R sit on each side of the insurance text, angled with
@@ -189,15 +204,30 @@ pub struct Sprite {
     pub sideways: bool,
     /// Current rotation; cards leave the shoe sideways and turn as they travel.
     pub rot: f32,
+    /// Pixels per second; the renderer leans and lifts a card by it.
+    pub vel: Vec2,
 }
 
 impl Sprite {
     fn new(card: Card, face_up: bool) -> Self {
-        Sprite { card, pos: SHOE_MOUTH, face_up, flip: 0., sideways: false, rot: PI / 2. }
+        Sprite { card, pos: SHOE_MOUTH, face_up, flip: 0., sideways: false, rot: PI / 2., vel: Vec2::ZERO }
     }
 
     fn step(&mut self, target: Vec2, dt: f32) {
-        self.pos += (target - self.pos) * (1. - (-dt * 13.).exp());
+        // A soft spring: the card overshoots its spot by a few percent and
+        // settles. Small fixed steps keep it the same at any frame rate.
+        let (w, z) = (16., 0.75);
+        let n = (dt * 240.).ceil().max(1.);
+        let h = dt / n;
+        for _ in 0..n as usize {
+            self.vel += ((target - self.pos) * (w * w) - self.vel * (2. * z * w)) * h;
+            self.pos += self.vel * h;
+        }
+        // Settled: stop exactly, so a resting card is perfectly still and straight.
+        if self.pos.distance(target) < 0.05 && self.vel.length() < 2. {
+            self.pos = target;
+            self.vel = Vec2::ZERO;
+        }
         let goal = if self.sideways { PI / 2. } else { 0. };
         self.rot += (goal - self.rot) * (1. - (-dt * 11.).exp());
         if (goal - self.rot).abs() < 0.02 {
@@ -227,11 +257,24 @@ pub struct Hand {
     pub done: bool,
     /// Outcome and net change in half credits.
     pub outcome: Option<(Outcome, i64)>,
+    /// `Game::time` when the bet was placed and when the outcome came in; the
+    /// chips and labels animate from these.
+    pub placed_at: f32,
+    pub outcome_at: f32,
 }
 
 impl Hand {
-    fn new(bet: i64) -> Self {
-        Hand { cards: Vec::new(), bet, doubled: false, split_aces: false, done: false, outcome: None }
+    fn new(bet: i64, now: f32) -> Self {
+        Hand {
+            cards: Vec::new(),
+            bet,
+            doubled: false,
+            split_aces: false,
+            done: false,
+            outcome: None,
+            placed_at: now,
+            outcome_at: 0.,
+        }
     }
     pub fn value(&self) -> Value {
         hand_value(self.cards.iter().map(|s| s.card))
@@ -282,6 +325,13 @@ pub enum Action {
     Chart,
     BetDown,
     BetUp,
+    /// Next card back.
+    CardBack,
+    /// Esc / closing the window: show the records board, and leave from there.
+    Leave,
+    /// On the records board: keep playing, or save the initials.
+    Stay,
+    Save,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -301,6 +351,7 @@ pub struct Floater {
     pub color: Color,
 }
 
+#[derive(Clone, Copy)]
 pub struct Button {
     pub rect: Rect,
     pub label: &'static str,
@@ -308,8 +359,11 @@ pub struct Button {
     pub action: Action,
     pub enabled: bool,
     pub color: Color,
+    /// Not a button: a quiet label filling its place.
+    pub status: bool,
 }
 
+#[derive(Default)]
 pub struct Input {
     pub mouse: Vec2,
     pub mouse_moved: bool,
@@ -320,10 +374,31 @@ pub struct Input {
     pub confirm: bool,
     pub left: bool,
     pub right: bool,
+    /// Typed characters, Enter and Backspace (for the initials on the records board).
+    pub typed: Vec<char>,
+    pub enter: bool,
+    pub backspace: bool,
+}
+
+/// Buttons that go away when used (the bar changes) act this long after the
+/// press, so they can show it first. The rest act at once.
+const PRESS_DELAY: f32 = 0.14;
+const LATER: [Action; 6] = [Action::Deal, Action::Insure, Action::NoInsure, Action::Stay, Action::Save, Action::Leave];
+
+/// The records board shown on the way out (Esc or closing the window).
+pub struct Leaving {
+    /// This session's result, in half credits, counting bets still on the table.
+    pub net: i64,
+    /// It makes the board, and the initials typed so far.
+    pub record: bool,
+    pub name: String,
+    /// Where it went once saved: (on the wins side, place).
+    pub saved: Option<(bool, usize)>,
 }
 
 /// Action colours, shared by the buttons and the strategy chart.
 pub const HIT_C: Color = Color::new(58. / 255., 123. / 255., 213. / 255., 1.);
+pub const CUT_C: Color = Color::new(214. / 255., 166. / 255., 36. / 255., 1.);
 pub const STAND_C: Color = Color::new(214. / 255., 69. / 255., 69. / 255., 1.);
 pub const DOUBLE_C: Color = Color::new(224. / 255., 154. / 255., 44. / 255., 1.);
 pub const SPLIT_C: Color = Color::new(79. / 255., 174. / 255., 92. / 255., 1.);
@@ -362,6 +437,31 @@ pub struct Game {
     /// Half credits on insurance (= half the bet), and whether it paid.
     pub insurance: i64,
     pub insurance_paid: Option<bool>,
+    /// `time` when the insurance was settled.
+    pub insurance_at: f32,
+    /// Warms (win, up to 1) or cools (loss, down to -1) the lamp; fades back to 0.
+    pub mood: f32,
+    /// How far the strategy chart has slid in, 0..1.
+    pub chart_in: f32,
+    /// Rounds won in a row (a push keeps it, a loss ends it), and how big the
+    /// fire at the betting spot is, 0..1; it grows and dies down smoothly.
+    pub streak: u32,
+    pub heat: f32,
+    /// Which of `render::BACKS` the cards wear.
+    pub card_back: usize,
+    pub scores: crate::save::Scores,
+    pub leaving: Option<Leaving>,
+    /// The board changed and should be written out; the player chose to leave.
+    pub scores_changed: bool,
+    pub quit: bool,
+    /// Buttons used recently and when (`time`), for their press animation.
+    pressed: Vec<(Button, f32)>,
+    /// Presses waiting for their button's animation: (action, `time` due).
+    later: Vec<(Action, f32)>,
+    /// The bar's buttons last frame, and `time` when they last changed (they
+    /// fade in when they do).
+    bar: Vec<&'static str>,
+    pub bar_at: f32,
 
     /// Half credits, so 3:2 payouts stay exact.
     pub credits: i64,
@@ -371,6 +471,8 @@ pub struct Game {
 
     pub floaters: Vec<Floater>,
     pub banner: Option<(String, f32)>,
+    /// How hard the table shakes, 0..1; fades out by itself.
+    pub shake: f32,
     pub sfx: Vec<Sfx>,
     /// Seconds since a card left the shoe; the next card then slides into the mouth.
     pub since_deal: f32,
@@ -418,12 +520,27 @@ impl Game {
             insurance_offer: false,
             insurance: 0,
             insurance_paid: None,
+            insurance_at: 0.,
+            mood: 0.,
+            chart_in: 0.,
+            streak: 0,
+            heat: 0.,
+            card_back: 0,
+            scores: Default::default(),
+            leaving: None,
+            scores_changed: false,
+            quit: false,
+            pressed: Vec::new(),
+            later: Vec::new(),
+            bar: Vec::new(),
+            bar_at: 0.,
             credits: START_CREDITS * 2,
             shown_credits: (START_CREDITS * 2) as f32,
             bet_idx: 3,
             reshuffle_in: None,
             floaters: Vec::new(),
             banner: None,
+            shake: 0.,
             sfx: Vec::new(),
             since_deal: 10.,
             show_chart: false,
@@ -596,88 +713,143 @@ impl Game {
 
     // ---------------------------------------------------------------- buttons
 
-    pub fn buttons(&self) -> Vec<Button> {
-        let mut b = Vec::new();
-        let betting = self.phase == Phase::Bet && self.reshuffle_in.is_none();
-        let grey = Color::from_rgba(90, 96, 120, 255);
-        b.push(Button {
-            rect: Rect::new(116., 236., 18., 24.),
-            label: "<",
-            key: "",
-            action: Action::BetDown,
-            enabled: betting && self.bet_idx > 0,
-            color: grey,
-        });
-        b.push(Button {
-            rect: Rect::new(186., 236., 18., 24.),
-            label: ">",
-            key: "",
-            action: Action::BetUp,
-            enabled: betting && self.bet_idx + 1 < BETS.len(),
-            color: grey,
-        });
-        b.push(Button {
-            rect: Rect::new(92., 236., 18., 24.),
-            label: "?",
-            key: "",
-            action: Action::Chart,
-            enabled: true,
-            color: if self.show_chart { Color::from_rgba(200, 150, 40, 255) } else { grey },
-        });
-        let slot = |i: usize| Rect::new(214. + i as f32 * 66., 232., 62., 34.);
-        if self.phase == Phase::Round && self.insurance_offer {
-            b.push(Button {
-                rect: slot(0),
-                label: "INSURE",
-                key: "I",
-                action: Action::Insure,
-                enabled: true,
-                color: Color::from_rgba(58, 123, 213, 255),
-            });
-            b.push(Button {
-                rect: slot(1),
-                label: "NO",
-                key: "N",
-                action: Action::NoInsure,
-                enabled: true,
-                color: Color::from_rgba(214, 69, 69, 255),
-            });
-        } else if self.phase == Phase::Round {
-            let turn = self.player_turn;
-            let h = self.hands.get(self.active);
-            let can_double = turn && h.is_some_and(|h| h.cards.len() == 2 && !h.split_aces);
-            let can_split = turn
-                && self.hands.len() < 4
-                && h.is_some_and(|h| {
-                    h.cards.len() == 2 && !h.split_aces && h.cards[0].card.points() == h.cards[1].card.points()
-                });
-            let defs = [
-                ("HIT", "H", Action::Hit, turn, HIT_C),
-                ("STAND", "S", Action::Stand, turn, STAND_C),
-                ("DOUBLE", "D", Action::Double, can_double, DOUBLE_C),
-                ("SPLIT", "P", Action::Split, can_split, SPLIT_C),
-            ];
-            for (i, (label, key, action, enabled, color)) in defs.into_iter().enumerate() {
-                b.push(Button { rect: slot(i), label, key, action, enabled, color });
+    /// Notes when each enabled button was used (clicked or by its key), so it
+    /// can play its press animation.
+    fn press(&mut self, actions: &[Action]) {
+        self.pressed.retain(|p| self.time - p.1 < 1.);
+        for b in self.buttons().into_iter().filter(|b| b.enabled && actions.contains(&b.action)) {
+            // Pressed again mid-press (a double click, the auto-player): let
+            // the first press finish its animation.
+            if self.pressed_at(b.action).is_some_and(|t| self.time - t < PRESS_DELAY) {
+                continue;
             }
-        } else if self.phase == Phase::Shuffle {
-            b.push(Button {
-                rect: Rect::new(346., 232., 128., 34.),
-                label: "SKIP",
-                key: "SPACE",
-                action: Action::Deal,
-                enabled: self.t > 0.2,
-                color: Color::from_rgba(90, 96, 120, 255),
-            });
-        } else if self.reshuffle_in.is_none() {
-            b.push(Button {
-                rect: Rect::new(346., 232., 128., 34.),
-                label: "DEAL",
-                key: "SPACE",
-                action: Action::Deal,
-                enabled: betting,
-                color: Color::from_rgba(224, 154, 44, 255),
-            });
+            self.pressed.retain(|p| p.0.action != b.action);
+            self.pressed.push((b, self.time));
+        }
+    }
+
+    /// Marks the pressed buttons (see `press`) and holds back the ones that
+    /// will go away (see `LATER`); returns those.
+    fn wait_for_press(&mut self, actions: &[Action]) -> Vec<Action> {
+        self.press(actions);
+        let enabled: Vec<Action> = self.buttons().iter().filter(|b| b.enabled).map(|b| b.action).collect();
+        let held: Vec<Action> = actions.iter().copied().filter(|a| LATER.contains(a) && enabled.contains(a)).collect();
+        for &a in &held {
+            if !self.later.iter().any(|p| p.0 == a) {
+                self.later.push((a, self.time + PRESS_DELAY));
+            }
+        }
+        held
+    }
+
+    /// When a button with this action was last used, if recently.
+    pub fn pressed_at(&self, a: Action) -> Option<f32> {
+        self.pressed.iter().find(|p| p.0.action == a).map(|p| p.1)
+    }
+
+
+
+    /// The session's result so far, in half credits; bets still on the table count as not lost yet.
+    pub fn session_net(&self) -> i64 {
+        let bets: i64 = self.hands.iter().filter(|h| h.outcome.is_none()).map(|h| h.bet * 2).sum();
+        let insurance = if self.insurance_paid.is_none() { self.insurance } else { 0 };
+        self.credits + bets + insurance - START_CREDITS * 2
+    }
+
+    fn leave_input(&mut self, actions: &[Action], input: &Input) {
+        let Some(l) = &mut self.leaving else {
+            let net = self.session_net();
+            let record = self.scores.is_record(net);
+            self.leaving = Some(Leaving { net, record, name: String::new(), saved: None });
+            return;
+        };
+        // The second Esc (or LEAVE) leaves.
+        if actions.contains(&Action::Leave) {
+            self.quit = true;
+            return;
+        }
+        if l.record && l.saved.is_none() {
+            for c in &input.typed {
+                if c.is_ascii_alphanumeric() && l.name.len() < 3 {
+                    l.name.push(c.to_ascii_uppercase());
+                }
+            }
+            if input.backspace {
+                l.name.pop();
+            }
+            if input.enter || actions.contains(&Action::Save) {
+                let name = if l.name.is_empty() { "???".to_string() } else { l.name.clone() };
+                l.saved = self.scores.add(&name, l.net);
+                self.scores_changed = true;
+                return;
+            }
+        }
+        // Space (not Enter) or STAY: back to the table.
+        if actions.contains(&Action::Stay) || (actions.contains(&Action::Deal) && !input.enter) {
+            self.leaving = None;
+        }
+    }
+
+    pub fn buttons(&self) -> Vec<Button> {
+        let grey = Color::from_rgba(90, 96, 120, 255);
+        let button = |rect, label, key, action, enabled, color| Button { rect, label, key, action, enabled, color, status: false };
+        if let Some(l) = &self.leaving {
+            let leave = button(wide(1), "LEAVE", "ESC", Action::Leave, true, Color::from_rgba(214, 69, 69, 255));
+            let first = if l.record && l.saved.is_none() {
+                button(wide(0), "SAVE", "ENTER", Action::Save, true, Color::from_rgba(224, 154, 44, 255))
+            } else {
+                button(wide(0), "STAY", "SPACE", Action::Stay, true, Color::from_rgba(52, 150, 72, 255))
+            };
+            return vec![first, leave];
+        }
+        // A quiet label in place of a button, so the bar never has a gap.
+        let status = |rect, label| Button { rect, label, key: "", action: Action::Deal, enabled: false, color: grey, status: true };
+        let chart = if self.show_chart { Color::from_rgba(200, 150, 40, 255) } else { grey };
+        let mut b = vec![button(Rect::new(92., 236., 18., 24.), "?", "", Action::Chart, true, chart)];
+        match self.phase {
+            Phase::Round if self.insurance_offer => {
+                b.push(button(wide(0), "INSURE", "I", Action::Insure, true, Color::from_rgba(58, 123, 213, 255)));
+                b.push(button(wide(1), "NO", "N", Action::NoInsure, true, Color::from_rgba(214, 69, 69, 255)));
+            }
+            Phase::Round => {
+                let turn = self.player_turn;
+                let h = self.hands.get(self.active);
+                let can_double = turn && h.is_some_and(|h| h.cards.len() == 2 && !h.split_aces);
+                let can_split = turn
+                    && self.hands.len() < 4
+                    && h.is_some_and(|h| {
+                        h.cards.len() == 2 && !h.split_aces && h.cards[0].card.points() == h.cards[1].card.points()
+                    });
+                b.push(button(slot(0), "HIT", "H", Action::Hit, turn, HIT_C));
+                b.push(button(slot(1), "STAND", "S", Action::Stand, turn, STAND_C));
+                b.push(button(slot(2), "DOUBLE", "D", Action::Double, can_double, DOUBLE_C));
+                b.push(button(slot(3), "SPLIT", "P", Action::Split, can_split, SPLIT_C));
+            }
+            Phase::Shuffle => {
+                b.push(button(NEXT_BUTTON, "SKIP", "SPACE", Action::Deal, self.t > 0.2, grey));
+                b.push(status(wide(1), "SHUFFLING"));
+            }
+            Phase::Cut => {
+                b.push(button(NEXT_BUTTON, "CUT", "SPACE", Action::Deal, true, CUT_C));
+                b.push(status(wide(1), "PICK WHERE TO CUT"));
+            }
+            Phase::CutAnim => {
+                b.push(button(NEXT_BUTTON, "SKIP", "SPACE", Action::Deal, self.t > 0.2, grey));
+                b.push(status(wide(1), "LOADING THE SHOE"));
+            }
+            Phase::Bet => {
+                let betting = self.reshuffle_in.is_none();
+                if betting {
+                    b.push(button(NEXT_BUTTON, "DEAL", "SPACE", Action::Deal, true, Color::from_rgba(224, 154, 44, 255)));
+                } else {
+                    b.push(status(NEXT_BUTTON, "SHUFFLE TIME"));
+                }
+                // The bet stepper: arrows at the ends, the amount between them.
+                let w = wide(1);
+                let (down, up) = (Rect::new(w.x, w.y, 30., w.h), Rect::new(w.x + w.w - 30., w.y, 30., w.h));
+                b.push(button(down, "<", "", Action::BetDown, betting && self.bet_idx > 0, grey));
+                b.push(button(up, ">", "", Action::BetUp, betting && self.bet_idx + 1 < BETS.len(), grey));
+            }
         }
         b
     }
@@ -695,9 +867,17 @@ impl Game {
         }
         for f in &mut self.floaters {
             f.t += dt;
-            f.pos.y -= dt * 14.;
+            // Rises quickly, then drifts to a stop.
+            f.pos.y -= dt * 40. * (-f.t * 2.2).exp();
         }
         self.floaters.retain(|f| f.t < 1.6);
+        self.shake = (self.shake - dt * 3.).max(0.);
+        self.mood *= (-dt * 0.7).exp();
+        // Fire from 2 wins in a row, full size at 6.
+        let goal = (self.streak.saturating_sub(1) as f32 / 5.).min(1.);
+        self.heat += (goal - self.heat) * (1. - (-dt * 2.).exp());
+        let goal = if self.show_chart { 1. } else { 0. };
+        self.chart_in += (goal - self.chart_in).clamp(-dt * 4., dt * 4.);
         if let Some((_, t)) = &mut self.banner {
             *t -= dt;
             if *t <= 0. {
@@ -714,8 +894,43 @@ impl Game {
                 }
             }
         }
+        // Presses whose button goes away (see LATER) act a moment after they
+        // happen, so the button can play its press first. Due ones now.
+        let now = self.time;
+        let due: Vec<Action> = self.later.iter().filter(|p| p.1 <= now).map(|p| p.0).collect();
+        self.later.retain(|p| p.1 > now);
+        // While the records board is up, nothing else happens.
+        let quiet = Input::default();
+        let input = if self.leaving.is_some() || actions.contains(&Action::Leave) {
+            if self.leaving.is_none() {
+                // The first Esc opens it at once; there's no button to press.
+                self.leave_input(&actions, input);
+            } else {
+                // On the board, Space is STAY and Enter is SAVE.
+                let save = input.enter && self.leaving.as_ref().is_some_and(|l| l.record && l.saved.is_none());
+                let shown: Vec<Action> = actions
+                    .iter()
+                    .map(|&a| if a == Action::Deal { if save { Action::Save } else { Action::Stay } } else { a })
+                    .collect();
+                self.wait_for_press(&shown);
+                // Typing goes on at once; the buttons act when due.
+                let typing = Input { typed: input.typed.clone(), backspace: input.backspace, ..Default::default() };
+                self.leave_input(&[], &typing);
+                for a in due.iter().filter(|a| matches!(a, Action::Stay | Action::Save | Action::Leave)) {
+                    self.leave_input(&[*a], &quiet);
+                }
+            }
+            actions.clear();
+            &quiet
+        } else {
+            input
+        };
         if actions.contains(&Action::Chart) {
             self.show_chart = !self.show_chart;
+        }
+        if actions.contains(&Action::CardBack) {
+            self.card_back = (self.card_back + 1) % crate::render::BACKS.len();
+            self.banner = Some((format!("CARD BACK: {}", crate::render::BACKS[self.card_back].name), 1.2));
         }
         // Space / Enter deal between rounds, decline insurance, and stand during
         // the player's turn.
@@ -732,6 +947,15 @@ impl Game {
         } else if input.wheel < 0. {
             actions.push(Action::BetDown);
         }
+        let waiting = self.wait_for_press(&actions);
+        actions.retain(|a| !waiting.contains(a));
+        // A delayed DEAL / SKIP / CUT also does what Space or a click does
+        // (skip, cut), when it lands; until then the press doesn't.
+        let mut confirm = input.confirm && waiting.is_empty();
+        if self.leaving.is_none() {
+            confirm |= due.contains(&Action::Deal);
+            actions.extend(due.iter().filter(|a| matches!(a, Action::Deal | Action::Insure | Action::NoInsure)));
+        }
 
         match self.phase {
             Phase::Shuffle => {
@@ -745,7 +969,7 @@ impl Game {
                         _ => {}
                     }
                 }
-                if input.confirm && self.t > 0.2 {
+                if confirm && self.t > 0.2 {
                     self.t = self.shuffle_time();
                 }
                 if self.t >= self.shuffle_time() {
@@ -764,7 +988,7 @@ impl Game {
                 if over && (input.mouse_moved || input.click) {
                     self.cut_choice = Self::cut_from_x(input.mouse.x);
                 }
-                let place = actions.contains(&Action::Deal) || (input.confirm && self.t > 0.2);
+                let place = actions.contains(&Action::Deal) || (confirm && self.t > 0.2);
                 if place {
                     // A real cut: the part in front of the cut card goes to the back.
                     self.shoe.rotate_left(self.cut_choice);
@@ -785,6 +1009,13 @@ impl Game {
                 }
                 if at(CA_LOAD, self.t, dt) {
                     self.sfx.push(Sfx::Load);
+                }
+                // Space / click skips the rest, like the shuffle.
+                if confirm && self.t > 0.2 && self.t < CA_RETURN {
+                    if self.t < CA_LOAD {
+                        self.sfx.push(Sfx::Load);
+                    }
+                    self.t = CA_RETURN;
                 }
                 if self.t >= CA_RETURN {
                     self.phase = Phase::Bet;
@@ -840,6 +1071,12 @@ impl Game {
             }
         }
 
+        let bar: Vec<&'static str> = self.buttons().iter().map(|b| b.label).collect();
+        if bar != self.bar {
+            self.bar = bar;
+            self.bar_at = self.time;
+        }
+
         // Card motion.
         let n = self.dealer.len();
         for (i, s) in self.dealer.iter_mut().enumerate() {
@@ -890,7 +1127,7 @@ impl Game {
         self.sweep_table();
         let bet = self.bet();
         self.credits -= bet * 2;
-        self.hands.push(Hand::new(bet));
+        self.hands.push(Hand::new(bet, self.time));
         self.active = 0;
         self.player_turn = false;
         self.phase = Phase::Round;
@@ -939,7 +1176,7 @@ impl Game {
                 self.credits -= bet * 2;
                 let second = self.hands[h].cards.pop().unwrap();
                 let aces = second.card.rank == 1;
-                let mut nh = Hand::new(bet);
+                let mut nh = Hand::new(bet, self.time);
                 nh.cards.push(second);
                 nh.split_aces = aces;
                 self.hands[h].split_aces = aces;
@@ -1022,6 +1259,7 @@ impl Game {
                         self.floater_at(-self.insurance, INSURANCE_FLOATER_POS);
                     }
                     self.insurance_paid = Some(dealer_bj);
+                    self.insurance_at = self.time;
                 }
                 let player_bj = is_blackjack(&self.hands[0].plain());
                 if dealer_bj || player_bj {
@@ -1038,8 +1276,11 @@ impl Game {
                 if v.total > 21 {
                     h.done = true;
                     h.outcome = Some((Outcome::Bust, -h.bet * 2));
+                    h.outcome_at = self.time;
                     let bet = h.bet;
+                    self.mood = self.mood.min(-0.6);
                     self.floater(-bet * 2);
+                    self.shake = self.shake.max(0.4);
                     self.wait += 0.3;
                     self.script.push_back(Step::NextHand);
                 } else if v.total == 21 || h.doubled || (h.split_aces && h.cards.len() >= 2) {
@@ -1094,6 +1335,7 @@ impl Game {
         let mut shown = 0;
         let mut any_win = false;
         let mut any_new = false;
+        let now = self.time;
         for h in &mut self.hands {
             if h.outcome.is_some() {
                 continue;
@@ -1119,6 +1361,7 @@ impl Game {
             any_win |= net > 0;
             shown += net;
             h.outcome = Some((o, net));
+            h.outcome_at = now;
         }
         // Busts already got their floater when they happened.
         if any_new {
@@ -1127,8 +1370,20 @@ impl Game {
         if any_win {
             self.sfx.push(Sfx::Win);
         }
+        // The whole round, busts included.
+        let round: i64 = self.hands.iter().filter_map(|h| h.outcome.map(|o| o.1)).sum();
+        if round > 0 {
+            self.streak += 1;
+        } else if round < 0 {
+            self.streak = 0;
+        }
+        // The lamp warms after a win and cools a little after a loss.
+        if any_new {
+            self.mood = if shown > 0 { 1. } else if shown < 0 { -0.6 } else { self.mood };
+        }
         if self.hands.iter().any(|h| h.outcome.is_some_and(|o| o.0 == Outcome::Blackjack)) {
             self.banner = Some(("BLACKJACK!".into(), 1.4));
+            self.shake = 1.;
         }
         self.player_turn = false;
         self.phase = Phase::Bet;
@@ -1139,6 +1394,15 @@ impl Game {
     }
 
     /// The BJ_AUTO test mode's player.
+    /// What the auto-player (BJ_AUTO) presses this frame, and whether it
+    /// confirms (skips); `watch` lets the shuffle play out.
+    pub fn auto_input(&self, watch: bool) -> (Vec<Action>, bool) {
+        let actions: Vec<Action> = self.auto_action().into_iter().collect();
+        let skip = self.t > 0.6 && !(watch && self.phase == Phase::Shuffle);
+        let confirm = skip || actions.contains(&Action::Deal);
+        (actions, confirm)
+    }
+
     pub fn auto_action(&self) -> Option<Action> {
         if self.phase == Phase::Bet && self.reshuffle_in.is_none() && self.t > 0.5 {
             return Some(Action::Deal);
@@ -1180,16 +1444,7 @@ mod tests {
     use super::*;
 
     fn idle() -> Input {
-        Input {
-            mouse: Vec2::ZERO,
-            mouse_moved: false,
-            click: false,
-            wheel: 0.,
-            actions: Vec::new(),
-            confirm: false,
-            left: false,
-            right: false,
-        }
+        Input::default()
     }
 
     fn act(a: Action) -> Input {
@@ -1232,9 +1487,15 @@ mod tests {
         g
     }
 
+    /// Presses a button and lets a delayed one act (see PRESS_DELAY).
+    fn tap(g: &mut Game, a: Action) {
+        g.update(0.05, &act(a));
+        g.update(PRESS_DELAY, &idle());
+    }
+
     fn start(g: &mut Game) -> i64 {
         let before = g.credits;
-        g.update(0.05, &act(Action::Deal));
+        tap(g, Action::Deal);
         settle_time(g);
         before
     }
@@ -1277,6 +1538,157 @@ mod tests {
     }
 
     #[test]
+    fn deal_waits_for_its_press_but_the_bet_arrows_dont() {
+        let mut g = stacked(&[10, 7, 10, 10]);
+        let bet = g.bet();
+        g.update(0.05, &act(Action::BetUp));
+        assert!(g.bet() > bet, "the arrows act at once");
+        g.update(0.05, &act(Action::Deal));
+        assert_eq!(g.phase, Phase::Bet, "DEAL plays its press first");
+        assert!(g.pressed_at(Action::Deal).is_some());
+        g.update(PRESS_DELAY, &idle());
+        assert_eq!(g.phase, Phase::Round);
+    }
+
+    #[test]
+    fn three_spaces_skip_shuffle_cut_and_setup() {
+        let mut g = Game::new();
+        g.update(0.3, &idle());
+        for _ in 0..3 {
+            tap(&mut g, Action::Deal);
+            g.update(0.25, &idle());
+        }
+        assert_eq!(g.phase, Phase::Bet);
+        // The next one deals.
+        tap(&mut g, Action::Deal);
+        assert_eq!(g.phase, Phase::Round);
+    }
+
+    #[test]
+    fn wins_build_a_streak_and_a_loss_ends_it() {
+        // Two wins (20 vs 17), then a loss (17 vs 20).
+        let mut g = stacked(&[10, 7, 10, 10, 10, 7, 10, 10, 10, 10, 7, 10]);
+        start(&mut g);
+        assert_eq!(g.streak, 0, "the player still has to stand");
+        g.update(0.05, &act(Action::Stand));
+        settle_time(&mut g);
+        assert_eq!(g.streak, 1);
+        start(&mut g);
+        g.update(0.05, &act(Action::Stand));
+        settle_time(&mut g);
+        assert_eq!(g.streak, 2);
+        for _ in 0..100 {
+            g.update(0.05, &idle());
+        }
+        assert!(g.heat > 0.15);
+        start(&mut g);
+        g.update(0.05, &act(Action::Stand));
+        settle_time(&mut g);
+        assert_eq!(g.streak, 0);
+    }
+
+    fn typed(s: &str, enter: bool) -> Input {
+        Input { typed: s.chars().collect(), enter, actions: if enter { vec![Action::Deal] } else { vec![] }, ..Default::default() }
+    }
+
+    #[test]
+    fn leaving_asks_twice_and_space_stays() {
+        let mut g = Game::new();
+        tap(&mut g, Action::Leave);
+        assert!(g.leaving.is_some() && !g.quit);
+        tap(&mut g, Action::Deal);
+        assert!(g.leaving.is_none() && !g.quit);
+        tap(&mut g, Action::Leave);
+        tap(&mut g, Action::Leave);
+        assert!(g.quit);
+    }
+
+    #[test]
+    fn a_record_takes_initials_and_saves_them() {
+        let mut g = Game::new();
+        g.credits += 300;
+        tap(&mut g, Action::Leave);
+        assert!(g.leaving.as_ref().unwrap().record);
+        // Only letters and digits, up to three, upper case; Backspace removes one.
+        g.update(0.05, &typed("ab-", false));
+        g.update(0.05, &Input { backspace: true, ..Default::default() });
+        g.update(0.05, &typed("cde", false));
+        assert_eq!(g.leaving.as_ref().unwrap().name, "ACD");
+        // Enter saves, and doesn't count as Space (stay).
+        g.update(0.05, &typed("", true));
+        g.update(PRESS_DELAY, &idle());
+        assert_eq!(g.leaving.as_ref().unwrap().saved, Some((true, 0)));
+        assert!(g.scores_changed);
+        assert_eq!(g.scores.wins[0].name, "ACD");
+        assert_eq!(g.scores.wins[0].net, 300);
+    }
+
+    #[test]
+    fn bets_on_the_table_dont_count_as_lost() {
+        let mut g = stacked(&[10, 7, 10, 10]);
+        start(&mut g);
+        assert!(g.player_turn);
+        assert_eq!(g.session_net(), 0);
+    }
+
+    /// Plays a seed like docs/record-gif.sh records it (auto-player, watching
+    /// the shuffle, 1/60 s frames) and returns each round's (net, had a
+    /// blackjack) and the frame it ended on.
+    fn rounds_for_seed(seed: u64, rounds: usize) -> Vec<(i64, bool, u64)> {
+        macroquad::rand::srand(seed);
+        let mut g = Game::new();
+        let mut out = Vec::new();
+        for frame in 1..20_000 {
+            let (actions, confirm) = g.auto_input(true);
+            let before = g.phase;
+            g.update(1. / 60., &Input { actions, confirm, ..Default::default() });
+            if before == Phase::Round && g.phase == Phase::Bet {
+                let net = g.hands.iter().filter_map(|h| h.outcome.map(|o| o.1)).sum();
+                let bj = g.hands.iter().any(|h| h.outcome.is_some_and(|o| o.0 == Outcome::Blackjack));
+                out.push((net, bj, frame));
+                if out.len() == rounds {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    /// The first seed whose first four hands go win, win, win (one of them a
+    /// blackjack), lose. Run with: cargo test --release find_gif_seed -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn find_gif_seed() {
+        for seed in 1..100_000 {
+            let r = rounds_for_seed(seed, 4);
+            let wins = r.len() == 4 && r[..3].iter().all(|x| x.0 > 0) && r[..3].iter().any(|x| x.1) && r[3].0 < 0;
+            if wins {
+                println!("seed {seed}: {r:?}");
+                return;
+            }
+        }
+        panic!("no seed found");
+    }
+
+    #[test]
+    fn dealt_cards_come_to_rest_exactly() {
+        let mut g = stacked(&[10, 10, 7, 7]);
+        start(&mut g);
+        assert!(g.player_turn);
+        for _ in 0..60 {
+            g.update(1. / 60., &idle());
+        }
+        let n = g.dealer.len();
+        for (i, s) in g.dealer.iter().enumerate() {
+            assert_eq!((s.pos, s.vel), (Game::dealer_slot(i, n), Vec2::ZERO));
+        }
+        let (x, _) = g.hand_spans()[0];
+        for (i, s) in g.hands[0].cards.iter().enumerate() {
+            assert_eq!((s.pos, s.vel), (Game::hand_slot(x, i, s.sideways), Vec2::ZERO));
+        }
+    }
+
+    #[test]
     fn space_stands_during_the_turn() {
         let mut g = stacked(&[10, 10, 7, 7]);
         start(&mut g);
@@ -1292,7 +1704,7 @@ mod tests {
         let mut g = stacked(&[10, 1, 10, 12]);
         let before = start(&mut g);
         assert!(g.insurance_offer);
-        g.update(0.05, &act(Action::Deal));
+        tap(&mut g, Action::Deal);
         settle_time(&mut g);
         assert_eq!(g.insurance, 0);
         assert_eq!(g.phase, Phase::Bet);
@@ -1303,13 +1715,13 @@ mod tests {
     fn cut_swaps_the_two_parts_and_marks_a_deck_from_the_end() {
         let mut g = Game::new();
         g.update(0.3, &idle());
-        g.update(0.05, &act(Action::Deal));
+        tap(&mut g, Action::Deal);
         g.update(0.05, &idle());
         assert_eq!(g.phase, Phase::Cut);
         let before = g.shoe.clone();
         g.cut_choice = 100;
         g.update(0.3, &idle());
-        g.update(0.05, &act(Action::Deal));
+        tap(&mut g, Action::Deal);
         assert_eq!(g.phase, Phase::CutAnim);
         assert_eq!(g.shoe[0], before[100]);
         assert_eq!(g.shoe[SHOE_CARDS - 100], before[0]);
@@ -1339,7 +1751,7 @@ mod tests {
         let mut g = stacked(&[10, 1, 10, 12]);
         let before = start(&mut g);
         assert!(g.insurance_offer);
-        g.update(0.05, &act(Action::NoInsure));
+        tap(&mut g, Action::NoInsure);
         settle_time(&mut g);
         assert_eq!(g.phase, Phase::Bet);
         assert_eq!(g.credits - before, -20);
@@ -1351,7 +1763,7 @@ mod tests {
         // Bet 10, insure 5. Dealer blackjack: lose 10, insurance wins 10.
         let mut g = stacked(&[10, 1, 10, 12]);
         let before = start(&mut g);
-        g.update(0.05, &act(Action::Insure));
+        tap(&mut g, Action::Insure);
         assert_eq!(before - g.credits, 20 + 10);
         settle_time(&mut g);
         assert_eq!(g.phase, Phase::Bet);
@@ -1364,7 +1776,7 @@ mod tests {
         // Dealer A+9 = 20, player 19: lose 10 and the 5 insurance.
         let mut g = stacked(&[10, 1, 9, 9]);
         let before = start(&mut g);
-        g.update(0.05, &act(Action::Insure));
+        tap(&mut g, Action::Insure);
         settle_time(&mut g);
         assert_eq!(g.insurance_paid, Some(false));
         assert!(g.player_turn);
@@ -1386,7 +1798,7 @@ mod tests {
     fn both_blackjack_push() {
         let mut g = stacked(&[1, 1, 10, 10]);
         let before = start(&mut g);
-        g.update(0.05, &act(Action::NoInsure));
+        tap(&mut g, Action::NoInsure);
         settle_time(&mut g);
         assert_eq!(g.credits, before);
         assert_eq!(g.hands[0].outcome.unwrap().0, Outcome::Push);

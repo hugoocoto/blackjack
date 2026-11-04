@@ -26,3 +26,15 @@ strip = true
 # Keep debug builds playable: optimize dependencies.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Android build (cargo quad-apk, see .github/workflows/android.yml).
+[package.metadata.android]
+package_name = "io.github.hugoocoto.hushjack"
+label = "Hushjack"
+res = "packaging/android/res"
+icon = "@mipmap/ic_launcher"
+fullscreen = true
+build_targets = ["armv7-linux-androideabi", "aarch64-linux-android", "x86_64-linux-android"]
+
+[package.metadata.android.activity_attributes]
+"android:screenOrientation" = "userLandscape"

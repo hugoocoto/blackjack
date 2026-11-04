@@ -1,2 +1,18 @@
-- when shuffleing, the cards from behind are in front of the cards in the middle
-- add: not insurance on <space>
+- Add compilation target for andriod and wasm
+- Try to publish it in the github pages
+- Add more card themes (for back and front, front is ok but I don't like back
+  that much)
+- Animation on strike, like fire that get bigger
+- Usability problem: when the mouse on hit or stand, it has to move too much to
+  reach 'deal' button.
+- Let skip cut animation and cards on foot animation on space, so triple space
+  jumps over all the shuffle, cut and setup animation.
+- On the shoe, one cut card is wider than the other. Both should be the same
+  size (the smaller, the one on the end is the correct) And both should move at
+  the same time, some hands the middle one moves but the end one don't, so it
+  looks like if the cards in between both has changed.
+- The card shadow adds, so when the two shadows join, it's darker
+
+- when closing the game, if the score is a record (both win record and lose
+  record) ask user to store it. Show scores like arcade games at the end, when
+  exiting. Like a double confirmation to exit.

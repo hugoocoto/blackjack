@@ -9,3 +9,8 @@ rsvg-convert -w 256 -h 256 hushjack.svg -o hushjack.png
 for n in 16 32 64; do
     rsvg-convert -w $n -h $n hushjack.svg | magick - -depth 8 rgba:window-$n.rgba
 done
+# Android launcher icons (see [package.metadata.android] in Cargo.toml).
+for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+    mkdir -p ../../packaging/android/res/mipmap-${d%:*}
+    rsvg-convert -w ${d#*:} -h ${d#*:} hushjack.svg -o ../../packaging/android/res/mipmap-${d%:*}/ic_launcher.png
+done

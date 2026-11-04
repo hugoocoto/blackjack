@@ -5,6 +5,8 @@ mod cards;
 mod desktop;
 mod game;
 mod render;
+mod save;
+mod shaders;
 mod strategy;
 
 use game::{Action, Game, Input, Sfx, H, W};
@@ -18,10 +20,15 @@ fn conf() -> Conf {
     if let Some(code) = desktop::run_flags() {
         std::process::exit(code);
     }
+    // Test hook: BJ_WINDOW=960x540 opens the window at that size.
+    let (window_width, window_height) = std::env::var("BJ_WINDOW")
+        .ok()
+        .and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?))))
+        .unwrap_or((1440, 810));
     Conf {
         window_title: "Hushjack".into(),
-        window_width: 1440,
-        window_height: 810,
+        window_width,
+        window_height,
         window_resizable: true,
         high_dpi: false,
         sample_count: 1,
@@ -42,6 +49,9 @@ fn conf() -> Conf {
 struct Sounds {
     banks: [Vec<Sound>; 6],
     pending: Vec<(Sfx, &'static [u8])>,
+    /// Picks which take of a sound plays. Its own generator, not the game's,
+    /// so playing with sound deals the same cards as playing muted.
+    pick: std::cell::Cell<u64>,
 }
 
 macro_rules! ogg {
@@ -72,7 +82,9 @@ impl Sounds {
             pending.clear();
         }
         pending.reverse();
-        Sounds { banks: Default::default(), pending }
+        // Any non-zero start will do for xorshift.
+        let pick = std::cell::Cell::new((miniquad::date::now() * 1e3) as u64 | 1);
+        Sounds { banks: Default::default(), pending, pick }
     }
 
     async fn load_one(&mut self) {
@@ -93,26 +105,50 @@ impl Sounds {
             Sfx::Chip => 0.6,
             _ => 0.7,
         };
-        let i = rand::gen_range(0, bank.len());
+        // xorshift
+        let mut x = self.pick.get();
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.pick.set(x);
+        let i = (x % bank.len() as u64) as usize;
         play_sound(&bank[i], PlaySoundParams { looped: false, volume });
     }
 }
 
 #[macroquad::main(conf)]
 async fn main() {
-    rand::srand((miniquad::date::now() * 1e6) as u64);
+    // A seed fixes the whole shoe (see --seed); otherwise every game is new.
+    rand::srand(desktop::seed().unwrap_or((miniquad::date::now() * 1e6) as u64));
 
-    let cards = Texture2D::from_file_with_format(include_bytes!("../assets/cards.png"), None);
-    cards.set_filter(FilterMode::Nearest);
+    // The card sheet, repainted with the chosen back (and again when it changes).
+    let sheet = Image::from_file_with_format(include_bytes!("../assets/cards.png"), None).expect("cards.png");
+    let cards_with_back = |back: usize| {
+        let mut s = sheet.clone();
+        render::paint_card_back(&mut s, back);
+        let t = Texture2D::from_image(&s);
+        t.set_filter(FilterMode::Nearest);
+        t
+    };
+    let mut back = save::load_card_back() % render::BACKS.len();
     let font = render::Glyphs::new(include_bytes!("../assets/font.ttf"));
-    let assets = render::Assets { cards, bg: render::make_background(), font };
+    let mut assets = render::Assets {
+        cards: cards_with_back(back),
+        bg: render::make_background(),
+        font,
+        lamp: shaders::lamp(),
+        shade: shaders::shade(),
+        cover: shaders::cover(),
+    };
+    // BJ_NO_CRT=1 draws without the screen shader (to compare).
+    let screen = if std::env::var("BJ_NO_CRT").is_ok() { None } else { shaders::screen() };
 
     let mut sounds = Sounds::new();
 
-    let rt = render_target(W as u32, H as u32);
-    rt.texture.set_filter(FilterMode::Nearest);
-    let mut cam = Camera2D::from_display_rect(Rect::new(0., 0., W, H));
-    cam.render_target = Some(rt.clone());
+    // Linear, so the screen shader can smooth the edges of the pixels it bends.
+    // With depth, used to keep shadows from stacking (see shaders.rs).
+    let rt = render_target_ex(W as u32, H as u32, RenderTargetParams { depth: true, ..Default::default() });
+    rt.texture.set_filter(FilterMode::Linear);
 
     // Test hooks: BJ_AUTO=1 plays by itself, BJ_SPEED=n fast-forwards,
     // BJ_STACK=r,r,.. stacks the first ranks,
@@ -120,6 +156,8 @@ async fn main() {
     // BJ_SHOTS=f1,f2,.. saves the frame (the 480x270 game, not the window) into
     // BJ_SHOT_DIR and quits after the last; frames then step a fixed 1/60 s, so a
     // recording doesn't depend on the monitor or on how slow saving is.
+    // BJ_SHOT_SCREEN=1 saves the window instead, with the screen shader.
+    // BJ_LEAVE_AT=n presses Esc at frame n (to see the records board).
     let auto = std::env::var("BJ_AUTO").is_ok();
     let watch = std::env::var("BJ_WATCH").is_ok();
     let speed: f32 = std::env::var("BJ_SPEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1.);
@@ -127,8 +165,13 @@ async fn main() {
         .map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect())
         .unwrap_or_default();
     let shot_dir = std::env::var("BJ_SHOT_DIR").unwrap_or_else(|_| ".".into());
+    let shot_screen = std::env::var("BJ_SHOT_SCREEN").is_ok();
+    let leave_at: Option<u64> = std::env::var("BJ_LEAVE_AT").ok().and_then(|s| s.parse().ok());
 
     let mut game = Game::new();
+    game.card_back = back;
+    game.scores = save::Scores::load();
+    prevent_quit();
     game.show_chart = std::env::var("BJ_CHART").is_ok();
     // Applied once the shoe is loaded, after the cut and the burn card.
     let mut stack: Option<Vec<u8>> =
@@ -138,10 +181,15 @@ async fn main() {
     let mut frame: u64 = 0;
 
     loop {
-        if is_key_pressed(KeyCode::Escape) {
-            break;
+        // Typed characters, for initials on the records board; drained every
+        // frame so they don't pile up.
+        let mut typed = Vec::new();
+        while let Some(c) = get_char_pressed() {
+            typed.push(c);
         }
-        if is_key_pressed(KeyCode::F11) || is_key_pressed(KeyCode::F) {
+        // While typing initials, letters are letters (F isn't fullscreen).
+        let board = game.leaving.is_some();
+        if is_key_pressed(KeyCode::F11) || !board && is_key_pressed(KeyCode::F) {
             fullscreen = !fullscreen;
             set_fullscreen(fullscreen);
         }
@@ -152,8 +200,10 @@ async fn main() {
         let scale = if fit >= 1. && fit.floor() / fit >= 0.85 { fit.floor() } else { fit };
         let ox = ((screen_width() - W * scale) / 2.).floor();
         let oy = ((screen_height() - H * scale) / 2.).floor();
+        // Through the same bend as the screen, so the mouse hits what it's over.
         let (mx, my) = mouse_position();
-        let mouse = vec2((mx - ox) / scale, (my - oy) / scale);
+        let local = vec2((mx - ox) / (W * scale), (my - oy) / (H * scale));
+        let mouse = if screen.is_some() { shaders::warp(local) } else { local } * vec2(W, H);
 
         let mut actions = Vec::new();
         let keys = [
@@ -164,6 +214,7 @@ async fn main() {
             (KeyCode::I, Action::Insure),
             (KeyCode::N, Action::NoInsure),
             (KeyCode::C, Action::Chart),
+            (KeyCode::B, Action::CardBack),
             (KeyCode::Space, Action::Deal),
             (KeyCode::Enter, Action::Deal),
             (KeyCode::KpEnter, Action::Deal),
@@ -189,12 +240,20 @@ async fn main() {
                 actions.push(Action::BetUp);
             }
         }
-        if auto {
-            actions.extend(game.auto_action());
+        // Closing the window shows the records board first, like Esc.
+        // (Not on the web: there's no window to close and nowhere to keep records.)
+        let esc = !cfg!(target_arch = "wasm32") && is_key_pressed(KeyCode::Escape);
+        if esc || is_quit_requested() || leave_at == Some(frame) {
+            actions.push(Action::Leave);
+        }
+        let mut auto_confirm = false;
+        if auto && !board {
+            let (a, c) = game.auto_input(watch);
+            actions.extend(a);
+            auto_confirm = c;
         }
         let click = is_mouse_button_pressed(MouseButton::Left);
-        let auto_skip = auto && game.t > 0.6 && !(watch && game.phase == game::Phase::Shuffle);
-        let confirm = click || actions.contains(&Action::Deal) || auto_skip;
+        let confirm = click || actions.contains(&Action::Deal) || auto_confirm;
         let input = Input {
             mouse,
             mouse_moved: mouse != last_mouse,
@@ -204,6 +263,9 @@ async fn main() {
             confirm,
             left,
             right,
+            typed,
+            enter: is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter),
+            backspace: is_key_pressed(KeyCode::Backspace),
         };
         last_mouse = mouse;
 
@@ -216,17 +278,44 @@ async fn main() {
         }
         let dt = if shots.is_empty() { get_frame_time().min(1. / 20.) } else { 1. / 60. } * speed;
         game.update(dt, &input);
+        if game.scores_changed {
+            game.scores_changed = false;
+            game.scores.save();
+        }
+        if game.quit {
+            break;
+        }
+        if game.card_back != back {
+            back = game.card_back;
+            assets.cards = cards_with_back(back);
+            save::save_card_back(back);
+        }
 
         for s in game.sfx.drain(..) {
             sounds.play(s);
         }
 
+        // A short, soft shake (blackjack, bust), on whole pixels.
+        let s = game.shake * game.shake * 2.;
+        let jolt = (vec2((game.time * 61.).sin(), (game.time * 47.).cos()) * s).round();
+        let mut cam = Camera2D::from_display_rect(Rect::new(-jolt.x, -jolt.y, W, H));
+        cam.render_target = Some(rt.clone());
         set_camera(&cam);
         clear_background(BLACK);
         assets.draw(&game, mouse);
 
         set_default_camera();
-        clear_background(Color::from_rgba(10, 8, 14, 255));
+        let border = Color::from_rgba(10, 8, 14, 255);
+        clear_background(border);
+        if let Some(screen) = &screen {
+            screen.set_uniform("src_size", vec2(W, H));
+            screen.set_uniform("dst_size", vec2(W * scale, H * scale));
+            screen.set_uniform("border", vec3(border.r, border.g, border.b));
+            screen.set_uniform("time", game.time);
+            gl_use_material(screen);
+        } else {
+            rt.texture.set_filter(FilterMode::Nearest);
+        }
         draw_texture_ex(
             &rt.texture,
             ox,
@@ -234,10 +323,12 @@ async fn main() {
             WHITE,
             DrawTextureParams { dest_size: Some(vec2(W * scale, H * scale)), flip_y: true, ..Default::default() },
         );
+        gl_use_default_material();
 
         frame += 1;
         if shots.contains(&frame) {
-            rt.texture.get_texture_data().export_png(&format!("{shot_dir}/shot_{frame:05}.png"));
+            let image = if shot_screen { get_screen_data() } else { rt.texture.get_texture_data() };
+            image.export_png(&format!("{shot_dir}/shot_{frame:05}.png"));
             if shots.iter().max() == Some(&frame) {
                 break;
             }

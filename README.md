@@ -10,7 +10,8 @@ you cut, and you play from the shoe for as long as you like.
 
 ## Download
 
-Get the build for your system from the
+Play it in your browser at <https://hugoocoto.github.io/blackjack/>, or get the
+build for your system from the
 [releases page](https://github.com/hugoocoto/blackjack/releases), unpack it and
 run `hushjack`. The game is a single file.
 
@@ -24,6 +25,9 @@ run `hushjack`. The game is a single file.
   already have. Run `./install.sh` in the unpacked folder to add it to your
   menu (it installs into `~/.local`, no root needed; `./install.sh --uninstall`
   removes it).
+- **Android:** install `hushjack-android.apk` (allow installing from unknown
+  sources when asked). It plays in landscape with touch. The records board
+  and the card back choice aren't saved there yet.
 
 With Rust installed, you can also get it from [crates.io](https://crates.io/crates/hushjack):
 
@@ -50,16 +54,25 @@ To install your own build into `~/.local` with a menu entry, run
 
 | Key | Action |
 | --- | --- |
-| `Space` | Deal, stand, decline insurance, skip the shuffle |
+| `Space` | Deal, stand, decline insurance, skip the shuffle and setup |
 | `H` `S` `D` `P` | Hit, stand, double, split |
 | `I` / `N` | Take or decline insurance |
 | `←` `→` or mouse wheel | Change your bet |
 | `C` | Show or hide the strategy chart |
+| `B` | Change the card back |
 | `F` | Fullscreen |
-| `Esc` | Quit |
+| `Esc` | Leave: shows the records board; `Esc` again quits |
 
 You can also click every button. To cut, move the cut card with the mouse
 or the arrow keys, then click.
+
+When you leave, the records board shows your best and roughest sessions. If
+this one makes it, type your initials and press `Enter`. The board and your
+card back are kept in `~/.local/share/hushjack` (Linux),
+`~/Library/Application Support/hushjack` (macOS) or `%APPDATA%\hushjack`
+(Windows). In the browser, `Esc` does nothing and nothing is kept.
+
+Two wins in a row set the betting spot on fire, and it grows with every win.
 
 ## Rules
 

@@ -14,10 +14,21 @@ Usage: hushjack [option]
 
 With no option, starts the game.
 
+  --seed N              play a fixed shoe: the same seed deals the same cards
   --install-desktop     add Hushjack to your app menu (Linux)
   --uninstall-desktop   remove it again
   -h, --help            show this help
   -V, --version         show the version";
+
+/// The shuffle seed from `--seed N` (or `--seed=N`), if given.
+pub fn seed() -> Option<u64> {
+    let args: Vec<String> = env::args().collect();
+    args.iter().enumerate().find_map(|(i, a)| match a.strip_prefix("--seed") {
+        Some("") => args.get(i + 1)?.parse().ok(),
+        Some(rest) => rest.strip_prefix('=')?.parse().ok(),
+        None => None,
+    })
+}
 
 /// Handles a command-line flag and returns the exit code, or None to start the game.
 pub fn run_flags() -> Option<i32> {
