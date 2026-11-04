@@ -28,7 +28,7 @@ jobs:
             name: macos-universal
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         shell: bash
@@ -79,7 +79,7 @@ jobs:
             tar czf "$dir.tar.gz" "$dir"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hushjack-${{ matrix.name }}
           path: hushjack-${{ matrix.name }}.*
@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     container: notfl3/cargo-apk
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Update Rust
         run: |
@@ -104,7 +104,7 @@ jobs:
           cargo quad-apk build --release
           cp target/android-artifacts/release/apk/hushjack.apk hushjack-android.apk
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hushjack-android
           path: hushjack-android.apk
@@ -115,7 +115,7 @@ jobs:
     needs: [build, android]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
       - name: Publish release
@@ -134,7 +134,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the tag matches Cargo.toml
         run: |
@@ -171,7 +171,7 @@ jobs:
     needs: [build, android]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
 
