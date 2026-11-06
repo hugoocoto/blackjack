@@ -226,7 +226,9 @@ def rhodes(midi, dur, vel=0.5, dark=False):
     n = round((dur + 1.6) * SR)
     t = np.arange(n) / SR
     f = hz(midi)
-    index = (0.5 if dark else 1.1) * vel * np.exp(-t / 0.25) + 0.2
+    # The lasting bend (0.35) gives the tone overtones at 400-1500 Hz, so it
+    # still carries on a phone's speaker, which plays little under 400.
+    index = (0.5 if dark else 1.1) * vel * np.exp(-t / 0.25) + 0.35
     tone = np.sin(2 * np.pi * f * t + index * np.sin(2 * np.pi * f * t))
     if not dark:
         tone += 0.05 * vel * np.sin(2 * np.pi * f * 7.1 * t) * np.exp(-t / 0.05)
@@ -236,12 +238,14 @@ def rhodes(midi, dur, vel=0.5, dark=False):
 
 def upright(midi, dur, vel=0.7):
     """Upright bass: a few harmonics plucked, sliding a hair into pitch,
-    with a soft thump of the finger."""
+    with a soft thump of the finger. The upper harmonics last, so on a
+    phone, which can't play the low root, the ear still hears it from them
+    (the missing fundamental)."""
     n = round((dur + 0.4) * SR)
     t = np.arange(n) / SR
     f = hz(midi) * (1 - 0.012 * np.exp(-t / 0.025))
     phase = 2 * np.pi * np.cumsum(f) / SR
-    tone = np.sin(phase) + 0.3 * np.sin(2 * phase) * np.exp(-t / 0.4) + 0.1 * np.sin(3 * phase) * np.exp(-t / 0.2)
+    tone = np.sin(phase) + sum(0.6 / k * np.sin(k * phase) * np.exp(-t * k / 2.5) for k in range(2, 9))
     return tone * env(n, 0.008, 1.0, dur, 0.07) * vel
 
 
@@ -269,12 +273,17 @@ def kick(vel):
 
 
 def ride(vel):
-    """A dark ride cymbal: inharmonic partials ringing over a little noise."""
+    """A dark ride cymbal, played soft: inharmonic partials ringing over a
+    little noise, the higher ones quieter and shorter, so it shimmers rather
+    than hisses (small speakers are loudest at 2-5 kHz)."""
     n = round(1.2 * SR)
     t = np.arange(n) / SR
-    x = sum(np.sin(2 * np.pi * f * t + rng.uniform(0, 6.3)) for f in (2950, 3710, 4420, 5390, 6130))
-    x = x / 5 + 0.3 * rng.standard_normal(n)
-    return x * env(n, 0.002, 0.45) * vel
+    x = sum(
+        a * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.3)) * np.exp(-t * f / 6000)
+        for f, a in ((1870, 0.8), (2950, 1), (3710, 0.6), (4420, 0.35), (5390, 0.2))
+    )
+    x = x / 3 + 0.12 * rng.standard_normal(n) * np.exp(-t / 0.08)
+    return x * env(n, 0.004, 0.35) * vel
 
 
 def crackle(level):
@@ -346,7 +355,7 @@ def part_swing():
             place(cym, ride(vel), at(bar * 4 + swing(beat)))
         for beat in (0.5, 1.75, 2.5, 3.75):
             place(ghost, brush(0.18, tau=0.05), at(bar * 4 + beat, late=0.012))
-    return make_room(lowpass(highpass(cym, 1800), 6500)) + make_room(lowpass(highpass(ghost, 700), 4000))
+    return make_room(lowpass(highpass(cym, 1200), 4500)) + make_room(lowpass(highpass(ghost, 700), 3000))
 
 
 def part_groove():
@@ -362,7 +371,7 @@ def part_groove():
         for beat in ([0, 2] if bar != 3 else [0, 1.5, 2]):
             place(kicks, kick(0.65), at(b0 + swing(beat)))
     return (
-        make_room(lowpass(highpass(snare, 600), 5000))
+        make_room(lowpass(highpass(snare, 600), 3500))
         + lowpass(highpass(sweep, 500), 2200)
         + lowpass(kicks, 150)
     )
@@ -402,7 +411,7 @@ STEMS = {
     "cold": part_cold,
 }
 # Each stem's loudness (RMS) in the mix, so the game fades each 0..1.
-LEVELS = {"table": 0.11, "groove": 0.045, "lead": 0.06, "swing": 0.035, "cold": 0.1}
+LEVELS = {"table": 0.11, "groove": 0.045, "lead": 0.06, "swing": 0.02, "cold": 0.1}
 
 
 def write(path, x):
