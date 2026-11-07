@@ -166,12 +166,12 @@ struct Music {
     playing: bool,
 }
 
-/// table, groove, lead, swing, cold
+/// table, groove, lead, pad, cold
 const STEMS: [&[u8]; 5] = [
     include_bytes!("../assets/music/table.ogg"),
     include_bytes!("../assets/music/groove.ogg"),
     include_bytes!("../assets/music/lead.ogg"),
-    include_bytes!("../assets/music/swing.ogg"),
+    include_bytes!("../assets/music/pad.ogg"),
     include_bytes!("../assets/music/cold.ogg"),
 ];
 
@@ -202,7 +202,7 @@ impl Music {
     }
 
     /// How loud each stem should be: the table always, a fuller groove and
-    /// then the theme as a winning run grows, the ride on a long one; on a
+    /// then the theme and the pad under it as a winning run grows; on a
     /// losing run the table gives way to the cold layer.
     fn targets(g: &Game) -> [f32; 5] {
         let smooth = |a: f32, b: f32, x: f32| game::smooth((x - a) / (b - a));
@@ -213,7 +213,7 @@ impl Music {
             table,
             table * (0.55 + 0.45 * smooth(0.05, 0.3, warm)),
             table * smooth(0.2, 0.5, warm),
-            smooth(0.55, 0.85, warm),
+            smooth(0.3, 0.6, warm),
             smooth(0.15, 0.6, cold),
         ]
         .map(|v| v * on)

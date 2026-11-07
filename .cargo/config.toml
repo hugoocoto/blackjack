@@ -2,3 +2,9 @@
 # JavaScript loaders at runtime, so the linker must leave them unresolved.
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "link-arg=--allow-undefined"]
+
+# Google Play wants 64-bit Android libraries to load on devices with 16 KB
+# memory pages. The NDK's linker already aligns arm64 to 64 KB, but x86_64 only
+# to 4 KB. (cargo quad-apk links with ld.lld directly, so no -Wl,.)
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-zmax-page-size=16384"]

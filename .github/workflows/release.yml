@@ -88,7 +88,10 @@ jobs:
   # SDK and NDK included). Its Rust is older than the game needs, so it's
   # updated first, and so is cargo quad-apk: the image's copy reads Cargo.toml
   # with cargo 0.62, which predates edition 2024. The APK is signed with a
-  # debug key: fine to install by hand.
+  # debug key: fine to install by hand. The same build also becomes an Android
+  # App Bundle for Google Play, signed with the upload key when the secrets
+  # ANDROID_KEYSTORE_BASE64 (the keystore file, base64), ANDROID_KEYSTORE_PASSWORD
+  # and ANDROID_KEY_ALIAS are set (and ANDROID_KEY_PASSWORD, if it differs).
   android:
     runs-on: ubuntu-latest
     container: notfl3/cargo-apk
@@ -106,9 +109,28 @@ jobs:
         run: cargo install --force --locked --git https://github.com/not-fl3/cargo-quad-apk --rev d411c8fe1c08339e46d7dc6b40ac04ea5e3a01b6 cargo-quad-apk
 
       # The newer cargo quad-apk zips the compiled Java into the APK with zip,
-      # which the image (Arch Linux) doesn't have.
+      # which the image (Arch Linux) doesn't have; the bundle needs unzip too.
       - name: Install zip
-        run: pacman -Sy --noconfirm --needed zip
+        run: pacman -Sy --noconfirm --needed zip unzip
+
+      # The image has only Android 31 and Java 8, too old for Google Play and
+      # for bundletool. Its keyring is too old for pacman to install a newer
+      # Java (the signatures fail), so these come from their publishers.
+      - name: Install Java 21, Android 36 and bundletool
+        run: |
+          cd /opt
+          curl -fsSL -o jdk.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.9%2B10/OpenJDK21U-jdk_x64_linux_hotspot_21.0.9_10.tar.gz
+          tar xzf jdk.tar.gz
+          rm jdk.tar.gz
+          echo "JAVA_HOME=/opt/jdk-21.0.9+10" >> "$GITHUB_ENV"
+          echo "/opt/jdk-21.0.9+10/bin" >> "$GITHUB_PATH"
+          curl -fsSL -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+          unzip -q cmdline-tools.zip -d cmdline-tools
+          rm cmdline-tools.zip
+          yes | JAVA_HOME=/opt/jdk-21.0.9+10 cmdline-tools/cmdline-tools/bin/sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;36.1.0" > /dev/null
+          ls "$ANDROID_HOME/platforms/android-36/android.jar" "$ANDROID_HOME/build-tools/36.1.0/aapt2"
+          curl -fsSL -o bundletool.jar https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo "BUNDLETOOL=/opt/bundletool.jar" >> "$GITHUB_ENV"
 
       # cargo quad-apk pastes miniquad's Android glue into src/main.rs, so it
       # has to follow the game's edition (2024): #[no_mangle] needs unsafe(...).
@@ -123,10 +145,40 @@ jobs:
           cargo quad-apk build --release
           cp target/android-artifacts/release/apk/hushjack.apk hushjack-android.apk
 
+      # Google Play refuses a version code it has seen; release.sh keeps it in
+      # step with the version.
+      - name: Check the Android version code
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          code=$(echo "$version" | awk -F. '{ print $1 * 10000 + $2 * 100 + $3 }')
+          if ! grep -q "^version_code = $code\$" Cargo.toml; then
+            echo "Cargo.toml's version_code should be $code for version $version"
+            exit 1
+          fi
+
+      - name: Build the Google Play bundle
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+            export ANDROID_KEYSTORE="$RUNNER_TEMP/upload.jks"
+          fi
+          packaging/android/build-aab.sh hushjack-android.apk hushjack-play.aab
+
       - uses: actions/upload-artifact@v7
         with:
           name: hushjack-android
           path: hushjack-android.apk
+
+      # Kept out of the GitHub release (see below): it's for Play Console only.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hushjack-play
+          path: hushjack-play.aab
 
   # A failed Android build doesn't hold back the desktop release.
   release:
@@ -140,7 +192,7 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" hushjack-* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" hushjack-*.tar.gz hushjack-*.zip hushjack-*.apk --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
 
   # Needs trusted publishing set up on crates.io (crate settings → Trusted
   # Publishing → GitHub: hugoocoto/blackjack, workflow release.yml), so no

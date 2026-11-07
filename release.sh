@@ -47,7 +47,15 @@ if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
     exit 1
 fi
 
+# Google Play's version code: 1.2.3 is 10203.
+code=$(echo "$version" | awk -F. '$2 < 100 && $3 < 100 { print $1 * 10000 + $2 * 100 + $3 }')
+if [ -z "$code" ]; then
+    echo "$version has a part over 99, which the Android version code can't hold." >&2
+    exit 1
+fi
+
 sed -i "0,/^version = \"$current\"/s//version = \"$version\"/" Cargo.toml
+sed -i "s/^version_code = [0-9]*/version_code = $code/" Cargo.toml
 cargo update -p hushjack --offline
 # The release builds use --locked, so check that the lockfile is up to date.
 cargo check --locked

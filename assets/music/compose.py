@@ -6,7 +6,7 @@ Music in main.rs):
     table   Rhodes comping and the bass, in two   always
     groove  brushes and a soft kick, laid back    always; more when winning
     lead    the vibraphone theme                  a winning run
-    swing   a ride cymbal and busier brushes      a long winning run
+    pad     the chords held, swelling in slowly   a winning run, after the lead
     cold    Satie-like: a low note, a soft chord, a note of the theme a bar
                                                   a losing run
 
@@ -28,8 +28,8 @@ How it's made, and why:
 - The theme is composed: a two-bar motif, a falling maj7 arpeggio, then
   sequenced a step down, call and response, the top of the phrase near
   its end. It only plays when winning, so it becomes the reward.
-- Winning harder doesn't speed the tempo; the ride comes in over busier
-  brushes, which is how a band lifts the feel.
+- Winning harder doesn't speed the tempo or add anything sharp; a soft pad
+  fills out the chords under the theme.
 - Cards and chips sound at 2-6 kHz; the music keeps out of their way.
 
 Run from the repository root (needs numpy and ffmpeg):
@@ -272,18 +272,17 @@ def kick(vel):
     return np.sin(2 * np.pi * np.cumsum(f) / SR) * env(n, 0.003, 0.14) * vel
 
 
-def ride(vel):
-    """A dark ride cymbal, played soft: inharmonic partials ringing over a
-    little noise, the higher ones quieter and shorter, so it shimmers rather
-    than hisses (small speakers are loudest at 2-5 kHz)."""
-    n = round(1.2 * SR)
+def pad(midi, dur, vel=0.5):
+    """A warm pad: two voices a few cents apart (a slow chorus), the lower
+    harmonics only, a slow swell in and out, so it has no attack at all."""
+    n = round((dur + 0.6) * SR)
     t = np.arange(n) / SR
-    x = sum(
-        a * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.3)) * np.exp(-t * f / 6000)
-        for f, a in ((1870, 0.8), (2950, 1), (3710, 0.6), (4420, 0.35), (5390, 0.2))
+    f = hz(midi)
+    tone = sum(
+        np.sin(2 * np.pi * f * d * t + p) + 0.3 * np.sin(4 * np.pi * f * d * t + p) + 0.1 * np.sin(6 * np.pi * f * d * t)
+        for d, p in ((2 ** (-5 / 1200), 0), (2 ** (5 / 1200), rng.uniform(0, 6.3)))
     )
-    x = x / 3 + 0.12 * rng.standard_normal(n) * np.exp(-t / 0.08)
-    return x * env(n, 0.004, 0.35) * vel
+    return tone * env(n, 0.7, 60, dur, 0.35) * vel
 
 
 def crackle(level):
@@ -346,16 +345,15 @@ def part_table():
     return k / np.sqrt(np.mean(k**2)) * 0.085 + b / np.sqrt(np.mean(b**2)) * 0.07
 
 
-def part_swing():
-    """The ride's ding, ding-a ding, and ghost taps of the brush in
-    between: the feel lifts, the tempo doesn't."""
-    cym, ghost = np.zeros(LOOP4), np.zeros(LOOP4)
-    for bar in range(4):
-        for beat, vel in [(0, 0.5), (1, 0.6), (1.5, 0.35), (2, 0.5), (3, 0.6), (3.5, 0.35)]:
-            place(cym, ride(vel), at(bar * 4 + swing(beat)))
-        for beat in (0.5, 1.75, 2.5, 3.75):
-            place(ghost, brush(0.18, tau=0.05), at(bar * 4 + beat, late=0.012))
-    return make_room(lowpass(highpass(cym, 1200), 4500)) + make_room(lowpass(highpass(ghost, 700), 3000))
+def part_pad():
+    """Each chord held under the band, swelling in slowly: the room fills
+    out, nothing new to listen to, nothing sharp."""
+    buf = np.zeros(LOOP)
+    for i, (beat0, _) in enumerate(CHANGES):
+        span = (CHANGES[(i + 1) % len(CHANGES)][0] - beat0) % (BARS * 4) or BARS * 4
+        for m in VOICINGS[i]:
+            place(buf, pad(m, span * BEAT, 0.5), at(beat0))
+    return make_room(lowpass(highpass(buf, 150), 1400))
 
 
 def part_groove():
@@ -407,11 +405,11 @@ STEMS = {
     "table": part_table,
     "groove": part_groove,
     "lead": part_lead,
-    "swing": part_swing,
+    "pad": part_pad,
     "cold": part_cold,
 }
 # Each stem's loudness (RMS) in the mix, so the game fades each 0..1.
-LEVELS = {"table": 0.11, "groove": 0.045, "lead": 0.06, "swing": 0.02, "cold": 0.1}
+LEVELS = {"table": 0.11, "groove": 0.045, "lead": 0.06, "pad": 0.03, "cold": 0.1}
 
 
 def write(path, x):
@@ -448,7 +446,7 @@ def main():
         mixes = {
             "1-calm": {"table": 1, "groove": 0.55},
             "2-winning": {"table": 1, "groove": 1, "lead": 1},
-            "3-long-streak": {"table": 1, "groove": 1, "lead": 1, "swing": 1},
+            "3-long-streak": {"table": 1, "groove": 1, "lead": 1, "pad": 1},
             "4-losing": {"cold": 1},
         }
         for name, mix in mixes.items():

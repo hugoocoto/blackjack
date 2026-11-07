@@ -34,9 +34,12 @@ label = "Hushjack"
 res = "packaging/android/res"
 icon = "@mipmap/ic_launcher"
 fullscreen = true
-# The only platform in the build image (notfl3/cargo-apk); cargo quad-apk
-# would look for 36 otherwise.
-android_version = 31
+# Google Play takes only apps that target Android 16 (API 36) or newer. The
+# build image (notfl3/cargo-apk) has only 31, so CI installs 36.
+android_version = 36
+# Google Play needs it to grow with each upload: major * 10000 + minor * 100 +
+# patch of the version above, kept in step by release.sh.
+version_code = 403
 build_targets = ["armv7-linux-androideabi", "aarch64-linux-android", "x86_64-linux-android"]
 
 [package.metadata.android.activity_attributes]
