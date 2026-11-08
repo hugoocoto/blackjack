@@ -141,6 +141,16 @@ jobs:
           sed -i 's/^#\[no_mangle\]/#[unsafe(no_mangle)]/' "$CARGO_HOME"/registry/src/*/miniquad-*/src/native/android/mod_inject.rs
           grep -n "no_mangle" "$CARGO_HOME"/registry/src/*/miniquad-*/src/native/android/mod_inject.rs
 
+      # miniquad's key handler ends with "return true" for every key, which
+      # tells Android it handled the volume buttons too, so they did nothing.
+      # Give them back to the system. Fails if miniquad changes that line.
+      - name: Let the volume buttons through
+        run: |
+          java=$(ls "$CARGO_HOME"/registry/src/*/miniquad-*/java/MainActivity.java)
+          sed -i 's/^\( *\)public boolean onKey(View v, int keyCode, KeyEvent event) {$/&\n\1    if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_MUTE) {\n\1        return false;\n\1    }/' "$java"
+          grep -n -A 4 "public boolean onKey" "$java"
+          grep -q KEYCODE_VOLUME_UP "$java"
+
       - name: Build
         run: |
           cargo quad-apk build --release
