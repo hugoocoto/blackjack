@@ -1,6 +1,6 @@
 [package]
 name = "hushjack"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -39,7 +39,7 @@ fullscreen = true
 android_version = 36
 # Google Play needs it to grow with each upload: major * 10000 + minor * 100 +
 # patch of the version above, kept in step by release.sh.
-version_code = 403
+version_code = 404
 build_targets = ["armv7-linux-androideabi", "aarch64-linux-android", "x86_64-linux-android"]
 
 [package.metadata.android.activity_attributes]
