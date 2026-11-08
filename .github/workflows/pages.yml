@@ -39,7 +39,8 @@ jobs:
           version() { grep -A1 "^name = \"$1\"$" Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p'; }
           src=$(echo "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/)
           mkdir site
-          cp web/index.html assets/icon/hushjack.png site/
+          # privacy.html is the privacy policy Google Play links to.
+          cp web/index.html web/privacy.html assets/icon/hushjack.png site/
           cp target/wasm32-unknown-unknown/release/hushjack.wasm site/
           cp "$src/miniquad-$(version miniquad)/js/gl.js" site/
           # quad-snd is patched (see Cargo.toml): its copy is in the repository.

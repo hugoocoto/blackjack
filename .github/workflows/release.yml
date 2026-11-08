@@ -1,7 +1,8 @@
-# Builds the game for Linux, Windows and macOS. Pushing a tag like v0.1.0
-# publishes the builds as a GitHub release, publishes the crate to crates.io
-# and pushes the builds to itch.io; running it by hand only builds them
-# (download from the run's artifacts).
+# Builds the game for Linux, Windows, macOS and Android. Pushing a tag like
+# v0.1.0 publishes the builds as a GitHub release, publishes the crate to
+# crates.io, pushes the builds to itch.io and uploads the Android bundle to
+# Google Play; running it by hand only builds them (download from the run's
+# artifacts).
 name: Release
 
 on:
@@ -270,3 +271,25 @@ jobs:
           if [ -f hushjack-android.apk ]; then
             butler/butler push hushjack-android.apk "${{ vars.ITCH_TARGET }}:android" --userversion "$version"
           fi
+
+  # Uploads the signed bundle to Google Play, as a release on the track named
+  # by the repository variable PLAY_TRACK (e.g. "internal"); promote it to
+  # other tracks in Play Console. Runs only when PLAY_TRACK and the secret
+  # PLAY_SERVICE_ACCOUNT_JSON (the JSON key of a service account with release
+  # rights on the app) are set.
+  play:
+    if: startsWith(github.ref, 'refs/tags/') && vars.PLAY_TRACK != '' && !cancelled() && needs.android.result == 'success'
+    needs: android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: hushjack-play
+
+      # Pinned to the v1.1.5 commit: it gets a key that can publish the app.
+      - uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: io.github.hugoocoto.hushjack
+          releaseFiles: hushjack-play.aab
+          tracks: ${{ vars.PLAY_TRACK }}
